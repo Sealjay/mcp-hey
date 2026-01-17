@@ -1,0 +1,25 @@
+# Template Repository Configuration
+# This file configures the template repository behavior
+
+# Include all files in the template by default
+include:
+  - "**/*"
+
+# Exclude development-specific files that shouldn't be copied to new repositories
+exclude:
+  - ".git/"
+  - ".github/template-config.yml"
+  - "node_modules/"
+  - "__pycache__/"
+  - "*.pyc"
+  - ".env*"
+  - "build/"
+  - "dist/"
+
+# Placeholders that will be replaced when using the template
+# Users can manually replace these in their new repositories
+placeholders:
+  "[Your Project Name]": "Project name goes here"
+  "[Brief description of your project - replace this placeholder]": "Project description goes here"
+  "your-username": "GitHub username"
+  "your-repo-name": "Repository name"
