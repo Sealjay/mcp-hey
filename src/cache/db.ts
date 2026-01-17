@@ -1,0 +1,169 @@
+/**
+ * SQLite database wrapper for email caching.
+ * Uses Bun's built-in SQLite for optimal performance.
+ */
+
+import { Database } from "bun:sqlite"
+import { existsSync, mkdirSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
+import { FTS_SCHEMA, INIT_SCHEMA, SCHEMA_VERSION } from "./schema"
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const DATA_DIR = join(__dirname, "..", "..", "data")
+const DB_PATH = join(DATA_DIR, "hey-cache.db")
+
+let db: Database | null = null
+
+export function getDatabase(): Database {
+  if (db) return db
+
+  // Ensure data directory exists
+  if (!existsSync(DATA_DIR)) {
+    mkdirSync(DATA_DIR, { recursive: true })
+  }
+
+  db = new Database(DB_PATH, { create: true })
+
+  // Initialize schema
+  initializeSchema(db)
+
+  return db
+}
+
+function initializeSchema(database: Database): void {
+  // Check current schema version
+  const versionResult = database
+    .query("SELECT value FROM schema_info WHERE key = 'version'")
+    .get() as { value: string } | null
+
+  const currentVersion = versionResult
+    ? Number.parseInt(versionResult.value, 10)
+    : 0
+
+  if (currentVersion < SCHEMA_VERSION) {
+    console.error(`[hey-mcp] Initializing cache schema v${SCHEMA_VERSION}...`)
+
+    // Run schema initialization
+    database.exec(INIT_SCHEMA)
+
+    // Initialize FTS (separate to handle potential errors gracefully)
+    try {
+      database.exec(FTS_SCHEMA)
+    } catch (err) {
+      console.error("[hey-mcp] FTS5 initialization warning:", err)
+    }
+
+    // Update version
+    database
+      .query(
+        "INSERT OR REPLACE INTO schema_info (key, value) VALUES ('version', ?)",
+      )
+      .run(String(SCHEMA_VERSION))
+
+    console.error("[hey-mcp] Cache schema initialized")
+  }
+}
+
+export function closeDatabase(): void {
+  if (db) {
+    // Run optimization before closing
+    db.exec("PRAGMA optimize")
+    db.close()
+    db = null
+  }
+}
+
+/**
+ * Execute a query with automatic database connection.
+ */
+export function query<T>(sql: string, params?: unknown[]): T[] {
+  const database = getDatabase()
+  const stmt = database.query(sql)
+  return (params ? stmt.all(...params) : stmt.all()) as T[]
+}
+
+/**
+ * Execute a single-row query.
+ */
+export function queryOne<T>(sql: string, params?: unknown[]): T | null {
+  const database = getDatabase()
+  const stmt = database.query(sql)
+  return (params ? stmt.get(...params) : stmt.get()) as T | null
+}
+
+/**
+ * Execute a write operation.
+ */
+export function execute(sql: string, params?: unknown[]): void {
+  const database = getDatabase()
+  const stmt = database.query(sql)
+  if (params) {
+    stmt.run(...params)
+  } else {
+    stmt.run()
+  }
+}
+
+/**
+ * Execute multiple statements in a transaction.
+ */
+export function transaction<T>(fn: () => T): T {
+  const database = getDatabase()
+  return database.transaction(fn)()
+}
+
+/**
+ * Get current Unix timestamp in seconds.
+ */
+export function unixNow(): number {
+  return Math.floor(Date.now() / 1000)
+}
+
+/**
+ * Check if a cached item is expired.
+ */
+export function isExpired(cachedAt: number, ttlSeconds: number): boolean {
+  return unixNow() > cachedAt + ttlSeconds
+}
+
+/**
+ * Generate a hash for search query caching.
+ */
+export function hashQuery(query: string): string {
+  // Simple hash for query deduplication
+  let hash = 0
+  for (let i = 0; i < query.length; i++) {
+    const char = query.charCodeAt(i)
+    hash = (hash << 5) - hash + char
+    hash = hash & hash // Convert to 32-bit integer
+  }
+  return hash.toString(36)
+}
+
+/**
+ * Run periodic maintenance tasks.
+ */
+export function runMaintenance(): void {
+  const database = getDatabase()
+
+  // Clean expired search cache
+  database
+    .query(
+      `DELETE FROM search_cache
+     WHERE cached_at + ttl_seconds < ?`,
+    )
+    .run(unixNow())
+
+  // Clean old sync queue entries
+  database
+    .query(
+      `DELETE FROM sync_queue
+     WHERE status = 'completed'
+       AND created_at < ?`,
+    )
+    .run(unixNow() - 86400) // 24 hours
+
+  // Incremental vacuum
+  database.exec("PRAGMA incremental_vacuum(100)")
+}

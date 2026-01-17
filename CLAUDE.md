@@ -1,26 +1,63 @@
-# CLAUDE.md
+# Hey.com MCP Server
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Project Purpose
+A local MCP server providing Claude with read/write access to Hey.com email accounts. Uses reverse-engineered Hey.com web APIs with browser-identical HTTP requests to avoid detection.
 
-## Repository Overview
+## Architecture
+- **MCP Server**: Bun/TypeScript, stdio transport, ~30MB idle memory
+- **Auth Helper**: Python/pywebview, spawns on-demand for login via system webview
+- **Communication**: File-based session sharing via `data/hey-cookies.json`
 
-This is a template repository for projects using a Python backend with Microsoft Agent Framework and TypeScript/React frontend. It targets Azure Static Web Apps deployment.
+## Key Design Decisions
+- Uses curl_cffi (via Python subprocess) for TLS/HTTP2 fingerprint matching when needed
+- Bun's native fetch for lightweight requests with custom headers
+- No bundled Chromium - uses system webview for auth to minimise footprint
+- Session cookies stored locally, never credentials
+- Rate limiting respected via x-ratelimit header parsing
 
-## Template Modularity
+## Tech Stack
+- Runtime: Bun 1.1+
+- Language: TypeScript (strict mode)
+- Auth: Python 3.10+ with pywebview
+- MCP SDK: @modelcontextprotocol/sdk
+- Testing: Bun test runner
 
-This template includes configuration for multiple languages (.NET, Python, TypeScript). After creating a project from this template:
+## File Structure
+```
+src/
+  index.ts           # MCP server entry point
+  hey-client.ts      # HTTP client with cookie injection
+  session.ts         # Session management and validation
+  tools/             # MCP tool implementations
+    read.ts          # Email reading tools
+    send.ts          # Email sending tools
+    organise.ts      # Organisation tools (set aside, reply later)
+auth/
+  hey-auth.py        # Python auth helper
+data/
+  hey-cookies.json   # Session storage (gitignored)
+docs/
+  API.md             # Hey.com API surface documentation
+  TOOLS.md           # MCP tool reference
+```
 
-- **Remove unused config files**: Delete `pyproject.toml` if not using Python, `package.json`/`biome.json` if not using TypeScript
-- **Optimize devcontainer**: Remove unused extensions and tooling from `.devcontainer/` for faster builds
+## Commands
+- `bun run dev` - Start MCP server in development mode
+- `bun run build` - Build for production
+- `bun test` - Run tests
+- `python auth/hey-auth.py` - Manual auth trigger
 
-> **Claude Code**: When working on a project derived from this template (not sealjay-template itself), prompt the user to optimize the devcontainer by removing unused languages and tooling.
+## Important Patterns
+- All HTTP requests must include browser-realistic headers
+- CSRF tokens fetched fresh before write operations
+- Exponential backoff on rate limits
+- Session validity checked on startup and before sensitive operations
 
-## Repository Structure
-
-- `backend/` - Agentic AI Python backend services
-- `frontend/` - TypeScript & React frontend
-- `docs/` - Documentation including PRD, technical specs, and ADRs
-- `docs/adr/` - Architecture Decision Records
+## Security Notes
+- Cookies stored with 600 permissions
+- No credentials ever stored
+- Auth happens entirely in Hey's webview
+- MCP uses stdio transport (no network exposure)
 
 ## Development Workflow
 
@@ -38,48 +75,15 @@ bun run format                  # Fix issues (lint + format)
 # Python (UV + Ruff)
 uv run ruff check .             # Lint
 uv run ruff format .            # Format
-uv run pytest                   # Test
 ```
-
-## Language-Specific Standards
-
-### Python
-- Use UV for package management
-- Use Ruff for linting and formatting
-- Use `async`/`await` for all AI operations
-- Use Pydantic for data validation, SQLAlchemy for DB
-- Apply type hints to all function signatures
-
-### TypeScript/React
-- Use Bun as runtime, package manager, bundler, and test runner
-- Use Biome for linting and formatting
-- Use functional components with hooks
-- Use CSS modules for styling
-- Use interfaces for data structures, prefer immutable data
-
-### Testing
-- **TypeScript**: `bun test` for unit tests, @testing-library/* for components (optional), Playwright for e2e (optional)
-- **Python**: pytest for unit tests, integration tests for inter-agent workflows
-- Place unit/component tests in `__tests__/` or use `.test.ts[x]` suffix
-- Place e2e tests in `e2e/` with `.spec.ts` suffix
 
 ## Commit Conventions
 
 Use conventional commit format. Valid commit types:
 - `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `cicd`, `revert`, `WIP`
 
-Scopes: `infra`, `cicd`, or custom
-
-## ADR Guidelines
-
-- ADRs are immutable once accepted - create new ones to supersede
-- File format: `NNNN-title-with-hyphens.md` (lowercase, sequential)
-- Always update `docs/adr/index.md` when adding new ADRs
-- Never modify the ADR template at `docs/adr/template.md`
-
 ## Pre-Commit Checklist
 
 - Run formatting and linting checks
 - Ensure all tests pass
-- Update ADRs for architectural decisions
 - Use US English for all code and documentation
