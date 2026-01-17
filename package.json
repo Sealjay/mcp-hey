@@ -1,0 +1,15 @@
+{
+	"name": "project-name",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"test": "bun test",
+		"lint": "biome check .",
+		"lint:file": "biome check",
+		"format": "biome check --write ."
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.4"
+	}
+}

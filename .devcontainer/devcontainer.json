@@ -1,0 +1,85 @@
+// For format details, see https://containers.dev/implementors/json_reference/
+{
+	"name": ".NET 8.0 with Python 3.12 & Bun",
+	"build": {
+		"dockerfile": "Dockerfile",
+		"args": {
+			// .NET version: 8.0, 7.0, 6.0
+			"VARIANT": "8.0",
+			// Node.js version (Bun coexists with Node for compatibility)
+			"NODE_VERSION": "lts/*",
+			"INSTALL_AZURE_CLI": "true"
+		}
+	},
+
+	// Podman compatibility settings
+	"runArgs": [
+		"--userns=keep-id",
+		"--security-opt=label=disable"
+	],
+	"containerUser": "vscode",
+	"updateRemoteUserUID": true,
+
+	// Configure tool-specific properties
+	"customizations": {
+		"vscode": {
+			"settings": {
+				// Python settings (Ruff for linting/formatting)
+				"python.defaultInterpreterPath": "/usr/bin/python3",
+				"[python]": {
+					"editor.defaultFormatter": "charliermarsh.ruff",
+					"editor.formatOnSave": true,
+					"editor.codeActionsOnSave": {
+						"source.fixAll": "explicit",
+						"source.organizeImports": "explicit"
+					}
+				},
+				// TypeScript/JavaScript settings (Biome for linting/formatting)
+				"[typescript]": {
+					"editor.defaultFormatter": "biomejs.biome",
+					"editor.formatOnSave": true
+				},
+				"[typescriptreact]": {
+					"editor.defaultFormatter": "biomejs.biome",
+					"editor.formatOnSave": true
+				},
+				"[javascript]": {
+					"editor.defaultFormatter": "biomejs.biome",
+					"editor.formatOnSave": true
+				},
+				"[json]": {
+					"editor.defaultFormatter": "biomejs.biome",
+					"editor.formatOnSave": true
+				},
+				// General editor settings
+				"editor.formatOnType": true,
+				"files.trimTrailingWhitespace": true
+			},
+			"extensions": [
+				// .NET/C# (optional - remove if not using)
+				"ms-dotnettools.csharp",
+				"ms-dotnettools.csdevkit",
+				// Python
+				"ms-python.python",
+				"ms-python.vscode-pylance",
+				"charliermarsh.ruff",
+				// TypeScript/JavaScript
+				"biomejs.biome",
+				// Azure
+				"ms-azuretools.vscode-azurefunctions",
+				"ms-vscode.azure-account",
+				// Demos/Presentations
+				"eliostruyf.vscode-demo-time"
+			]
+		}
+	},
+
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	// "forwardPorts": [5000, 5001],
+
+	// Use 'postCreateCommand' to run commands after the container is created.
+	// "postCreateCommand": "bun install",
+
+	// Comment out connect as root instead. More info: https://aka.ms/vscode-remote/containers/non-root.
+	"remoteUser": "vscode"
+}
