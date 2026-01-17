@@ -1,4 +1,5 @@
 import { parse as parseHtml } from "node-html-parser"
+import { invalidateForAction } from "../cache"
 import { heyClient } from "../hey-client"
 
 interface AccountInfo {
@@ -115,6 +116,9 @@ export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
       const location = response.headers.get("location")
       const messageId = location?.match(/\/messages\/(\d+)/)?.[1]
 
+      // Invalidate cache after successful send
+      invalidateForAction("send")
+
       return { success: true, messageId }
     }
     if (response.status === 302) {
@@ -122,9 +126,11 @@ export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
       const location = response.headers.get("location")
       const messageId = location?.match(/\/messages\/(\d+)/)?.[1]
 
+      // Invalidate cache after successful send
+      invalidateForAction("send")
+
       return { success: true, messageId }
     }
-    const text = await response.text()
     return {
       success: false,
       error: `Request failed with status ${response.status}`,
@@ -166,9 +172,15 @@ export async function replyToEmail(params: ReplyParams): Promise<SendResult> {
     )
 
     if (response.status >= 200 && response.status < 300) {
+      // Invalidate cache after successful reply
+      invalidateForAction("reply")
+
       return { success: true }
     }
     if (response.status === 302) {
+      // Invalidate cache after successful reply
+      invalidateForAction("reply")
+
       return { success: true }
     }
     return {

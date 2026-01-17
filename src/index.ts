@@ -7,8 +7,15 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js"
 
+import {
+  closeDatabase,
+  getCacheStats,
+  getDatabase,
+  getMessageCount,
+  getUnreadCount,
+  runMaintenance,
+} from "./cache"
 import { heyClient } from "./hey-client"
-import { ensureValidSession } from "./session"
 import { replyLater, screenIn, screenOut, setAside } from "./tools/organise"
 import {
   listFeed,
@@ -37,7 +44,8 @@ const tools: Tool[] = [
   // Reading tools
   {
     name: "hey_list_imbox",
-    description: "List emails in the Hey.com Imbox (important emails)",
+    description:
+      "List emails in the Hey.com Imbox (important emails). Returns cached results unless force_refresh=true.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -48,13 +56,18 @@ const tools: Tool[] = [
         page: {
           type: "number",
           description: "Page number for pagination (default: 1)",
+        },
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and fetch fresh data (default: false)",
         },
       },
     },
   },
   {
     name: "hey_list_feed",
-    description: "List emails in The Feed (newsletters, notifications)",
+    description:
+      "List emails in The Feed (newsletters, notifications). Returns cached results unless force_refresh=true.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -65,13 +78,18 @@ const tools: Tool[] = [
         page: {
           type: "number",
           description: "Page number for pagination (default: 1)",
+        },
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and fetch fresh data (default: false)",
         },
       },
     },
   },
   {
     name: "hey_list_paper_trail",
-    description: "List emails in Paper Trail (receipts, confirmations)",
+    description:
+      "List emails in Paper Trail (receipts, confirmations). Returns cached results unless force_refresh=true.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -83,36 +101,59 @@ const tools: Tool[] = [
           type: "number",
           description: "Page number for pagination (default: 1)",
         },
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and fetch fresh data (default: false)",
+        },
       },
     },
   },
   {
     name: "hey_list_set_aside",
-    description: "List emails in the Set Aside stack",
+    description:
+      "List emails in the Set Aside stack. Returns cached results unless force_refresh=true.",
     inputSchema: {
       type: "object" as const,
-      properties: {},
+      properties: {
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and fetch fresh data (default: false)",
+        },
+      },
     },
   },
   {
     name: "hey_list_reply_later",
-    description: "List emails in the Reply Later stack",
+    description:
+      "List emails in the Reply Later stack. Returns cached results unless force_refresh=true.",
     inputSchema: {
       type: "object" as const,
-      properties: {},
+      properties: {
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and fetch fresh data (default: false)",
+        },
+      },
     },
   },
   {
     name: "hey_list_screener",
-    description: "List emails waiting in the Screener",
+    description:
+      "List emails waiting in the Screener. Returns cached results unless force_refresh=true.",
     inputSchema: {
       type: "object" as const,
-      properties: {},
+      properties: {
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and fetch fresh data (default: false)",
+        },
+      },
     },
   },
   {
     name: "hey_read_email",
-    description: "Read the full content of an email by ID",
+    description:
+      "Read the full content of an email by ID. Returns cached content unless force_refresh=true.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -125,13 +166,18 @@ const tools: Tool[] = [
           enum: ["html", "text"],
           description: "Format to return (default: html)",
         },
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and fetch fresh data (default: false)",
+        },
       },
       required: ["id"],
     },
   },
   {
     name: "hey_search",
-    description: "Search emails by query",
+    description:
+      "Search emails by query. Uses local FTS cache first, then network. Use force_refresh for real-time results.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -142,6 +188,10 @@ const tools: Tool[] = [
         limit: {
           type: "number",
           description: "Maximum number of results (default: 25)",
+        },
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and search via network (default: false)",
         },
       },
       required: ["query"],
@@ -253,6 +303,22 @@ const tools: Tool[] = [
       required: ["sender_email"],
     },
   },
+
+  // Cache management tool
+  {
+    name: "hey_cache_status",
+    description: "Check cache freshness and statistics",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        folder: {
+          type: "string",
+          enum: ["imbox", "feed", "paper_trail", "set_aside", "reply_later"],
+          description: "Optional folder to get specific stats for",
+        },
+      },
+    },
+  },
 ]
 
 // Create MCP server
@@ -285,55 +351,63 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "hey_list_imbox": {
         const limit = (args?.limit as number) ?? 25
         const page = (args?.page as number) ?? 1
-        result = await listImbox(limit, page)
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
+        result = await listImbox({ limit, page, forceRefresh })
         break
       }
       case "hey_list_feed": {
         const limit = (args?.limit as number) ?? 25
         const page = (args?.page as number) ?? 1
-        result = await listFeed(limit, page)
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
+        result = await listFeed({ limit, page, forceRefresh })
         break
       }
       case "hey_list_paper_trail": {
         const limit = (args?.limit as number) ?? 25
         const page = (args?.page as number) ?? 1
-        result = await listPaperTrail(limit, page)
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
+        result = await listPaperTrail({ limit, page, forceRefresh })
         break
       }
       case "hey_list_set_aside": {
-        result = await listSetAside()
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
+        result = await listSetAside({ forceRefresh })
         break
       }
       case "hey_list_reply_later": {
-        result = await listReplyLater()
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
+        result = await listReplyLater({ forceRefresh })
         break
       }
       case "hey_list_screener": {
-        result = await listScreener()
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
+        result = await listScreener({ forceRefresh })
         break
       }
       case "hey_read_email": {
         const id = args?.id as string
         const format = (args?.format as "html" | "text") ?? "html"
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
         if (!id) {
           return {
             content: [{ type: "text", text: "Error: id is required" }],
             isError: true,
           }
         }
-        result = await readEmail(id, format)
+        result = await readEmail(id, format, forceRefresh)
         break
       }
       case "hey_search": {
         const query = args?.query as string
         const limit = (args?.limit as number) ?? 25
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
         if (!query) {
           return {
             content: [{ type: "text", text: "Error: query is required" }],
             isError: true,
           }
         }
-        result = await searchEmails(query, limit)
+        result = await searchEmails(query, { limit, forceRefresh })
         break
       }
 
@@ -424,6 +498,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break
       }
 
+      // Cache management
+      case "hey_cache_status": {
+        const folder = args?.folder as string | undefined
+        const stats = getCacheStats()
+        const unreadCount = getUnreadCount(folder)
+        const messageCount = getMessageCount(folder)
+
+        result = {
+          ...stats,
+          folder_stats: folder
+            ? {
+                folder,
+                message_count: messageCount,
+                unread_count: unreadCount,
+              }
+            : undefined,
+          global_unread: getUnreadCount(),
+        }
+        break
+      }
+
       default:
         return {
           content: [{ type: "text", text: `Unknown tool: ${name}` }],
@@ -455,6 +550,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   console.error("[hey-mcp] Starting Hey.com MCP server...")
 
+  // Initialize cache database
+  try {
+    getDatabase()
+    console.error("[hey-mcp] Cache database initialized")
+  } catch (error) {
+    console.error(
+      "[hey-mcp] Warning: Could not initialize cache:",
+      sanitiseError(error),
+    )
+  }
+
   // Validate session on startup
   try {
     await heyClient.ensureSession()
@@ -466,6 +572,33 @@ async function main() {
     )
     console.error("[hey-mcp] Authentication may be required on first tool use")
   }
+
+  // Set up periodic maintenance
+  const maintenanceInterval = setInterval(
+    () => {
+      try {
+        runMaintenance()
+      } catch (error) {
+        console.error("[hey-mcp] Maintenance error:", sanitiseError(error))
+      }
+    },
+    5 * 60 * 1000,
+  ) // Every 5 minutes
+
+  // Handle graceful shutdown
+  process.on("SIGINT", () => {
+    console.error("[hey-mcp] Shutting down...")
+    clearInterval(maintenanceInterval)
+    closeDatabase()
+    process.exit(0)
+  })
+
+  process.on("SIGTERM", () => {
+    console.error("[hey-mcp] Shutting down...")
+    clearInterval(maintenanceInterval)
+    closeDatabase()
+    process.exit(0)
+  })
 
   // Start stdio transport
   const transport = new StdioServerTransport()

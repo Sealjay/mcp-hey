@@ -1,4 +1,16 @@
 import { type HTMLElement, parse as parseHtml } from "node-html-parser"
+import {
+  type CacheMetadata,
+  type CachedResult,
+  cacheEmailDetail,
+  cacheMessages,
+  cacheSearchResults,
+  ftsSearch,
+  getCachedEmailDetail,
+  getCachedMessages,
+  getCachedSearch,
+  needsRefresh,
+} from "../cache"
 import { heyClient } from "../hey-client"
 
 export interface Email {
@@ -21,6 +33,17 @@ export interface EmailDetail {
   body: string
   date?: string
   threadId?: string
+}
+
+export interface ListOptions {
+  limit?: number
+  page?: number
+  forceRefresh?: boolean
+}
+
+export interface SearchOptions {
+  limit?: number
+  forceRefresh?: boolean
 }
 
 function extractEmailsFromHtml(html: string): Email[] {
@@ -145,57 +168,205 @@ function extractEmailDetail(html: string, id: string): EmailDetail {
   }
 }
 
-export async function listImbox(limit = 25, page = 1): Promise<Email[]> {
-  const path = page > 1 ? `/my/imbox?page=${page}` : "/my/imbox"
-  const html = await heyClient.fetchHtml(path)
-  const emails = extractEmailsFromHtml(html)
-  return emails.slice(0, limit)
+function createNetworkMetadata(): CacheMetadata {
+  return {
+    source: "network",
+    cached_at: new Date().toISOString(),
+    age_seconds: 0,
+    is_stale: false,
+    hint: "Fresh data from Hey.com",
+  }
 }
 
-export async function listFeed(limit = 25, page = 1): Promise<Email[]> {
-  const path = page > 1 ? `/my/the_feed?page=${page}` : "/my/the_feed"
-  const html = await heyClient.fetchHtml(path)
-  const emails = extractEmailsFromHtml(html)
-  return emails.slice(0, limit)
+/**
+ * Generic folder listing with cache support.
+ */
+async function listFolder(
+  folder: string,
+  path: string,
+  options: ListOptions = {},
+): Promise<CachedResult<Email[]>> {
+  const { limit = 25, page = 1, forceRefresh = false } = options
+
+  // Check cache first (only for first page)
+  if (!forceRefresh && page === 1 && !needsRefresh(folder)) {
+    const cached = getCachedMessages(folder, limit)
+    if (cached) {
+      return {
+        data: cached.messages,
+        _cache: cached.metadata,
+      }
+    }
+  }
+
+  // Fetch from network
+  const fullPath = page > 1 ? `${path}?page=${page}` : path
+  const html = await heyClient.fetchHtml(fullPath)
+  const emails = extractEmailsFromHtml(html).slice(0, limit)
+
+  // Update cache (only for first page)
+  if (page === 1) {
+    cacheMessages(folder, emails)
+  }
+
+  return {
+    data: emails,
+    _cache: createNetworkMetadata(),
+  }
 }
 
-export async function listPaperTrail(limit = 25, page = 1): Promise<Email[]> {
-  const path = page > 1 ? `/my/paper_trail?page=${page}` : "/my/paper_trail"
-  const html = await heyClient.fetchHtml(path)
-  const emails = extractEmailsFromHtml(html)
-  return emails.slice(0, limit)
+export async function listImbox(
+  options: ListOptions = {},
+): Promise<CachedResult<Email[]>> {
+  return listFolder("imbox", "/my/imbox", options)
 }
 
-export async function listSetAside(): Promise<Email[]> {
-  const html = await heyClient.fetchHtml("/my/set_aside")
-  return extractEmailsFromHtml(html)
+export async function listFeed(
+  options: ListOptions = {},
+): Promise<CachedResult<Email[]>> {
+  return listFolder("feed", "/my/the_feed", options)
 }
 
-export async function listReplyLater(): Promise<Email[]> {
-  const html = await heyClient.fetchHtml("/my/reply_later")
-  return extractEmailsFromHtml(html)
+export async function listPaperTrail(
+  options: ListOptions = {},
+): Promise<CachedResult<Email[]>> {
+  return listFolder("paper_trail", "/my/paper_trail", options)
+}
+
+export async function listSetAside(
+  options: ListOptions = {},
+): Promise<CachedResult<Email[]>> {
+  return listFolder("set_aside", "/my/set_aside", options)
+}
+
+export async function listReplyLater(
+  options: ListOptions = {},
+): Promise<CachedResult<Email[]>> {
+  return listFolder("reply_later", "/my/reply_later", options)
+}
+
+export async function listScreener(
+  options: ListOptions = {},
+): Promise<CachedResult<Email[]>> {
+  return listFolder("screener", "/my/screener", options)
 }
 
 export async function readEmail(
   id: string,
   format: "html" | "text" = "html",
-): Promise<EmailDetail> {
+  forceRefresh = false,
+): Promise<CachedResult<EmailDetail>> {
+  // Check cache first (only for HTML format)
+  if (!forceRefresh && format === "html") {
+    const cached = getCachedEmailDetail(id)
+    if (cached) {
+      return {
+        data: cached.email,
+        _cache: cached.metadata,
+      }
+    }
+  }
+
+  // Fetch from network
   const path = format === "text" ? `/messages/${id}.text` : `/messages/${id}`
   const html = await heyClient.fetchHtml(path)
-  return extractEmailDetail(html, id)
+  const email = extractEmailDetail(html, id)
+
+  // Update cache
+  cacheEmailDetail(email)
+
+  return {
+    data: email,
+    _cache: createNetworkMetadata(),
+  }
 }
 
 export async function searchEmails(
   query: string,
-  limit = 25,
-): Promise<Email[]> {
+  options: SearchOptions = {},
+): Promise<CachedResult<Email[]>> {
+  const { limit = 25, forceRefresh = false } = options
+
+  // Try local FTS search first (fast)
+  if (!forceRefresh) {
+    const ftsResult = ftsSearch(query, limit)
+    if (ftsResult && ftsResult.emails.length > 0) {
+      return {
+        data: ftsResult.emails,
+        _cache: ftsResult.metadata,
+      }
+    }
+
+    // Check cached search results
+    const cached = getCachedSearch(query)
+    if (cached) {
+      return {
+        data: cached.emails,
+        _cache: cached.metadata,
+      }
+    }
+  }
+
+  // Fetch from network
   const encodedQuery = encodeURIComponent(query)
   const html = await heyClient.fetchHtml(`/my/search?q=${encodedQuery}`)
-  const emails = extractEmailsFromHtml(html)
-  return emails.slice(0, limit)
+  const emails = extractEmailsFromHtml(html).slice(0, limit)
+
+  // Update cache
+  cacheSearchResults(query, emails)
+
+  return {
+    data: emails,
+    _cache: createNetworkMetadata(),
+  }
 }
 
-export async function listScreener(): Promise<Email[]> {
-  const html = await heyClient.fetchHtml("/my/screener")
-  return extractEmailsFromHtml(html)
+// Legacy exports for backward compatibility (without cache metadata)
+export async function listImboxLegacy(limit = 25, page = 1): Promise<Email[]> {
+  const result = await listImbox({ limit, page })
+  return result.data
+}
+
+export async function listFeedLegacy(limit = 25, page = 1): Promise<Email[]> {
+  const result = await listFeed({ limit, page })
+  return result.data
+}
+
+export async function listPaperTrailLegacy(
+  limit = 25,
+  page = 1,
+): Promise<Email[]> {
+  const result = await listPaperTrail({ limit, page })
+  return result.data
+}
+
+export async function listSetAsideLegacy(): Promise<Email[]> {
+  const result = await listSetAside()
+  return result.data
+}
+
+export async function listReplyLaterLegacy(): Promise<Email[]> {
+  const result = await listReplyLater()
+  return result.data
+}
+
+export async function readEmailLegacy(
+  id: string,
+  format: "html" | "text" = "html",
+): Promise<EmailDetail> {
+  const result = await readEmail(id, format)
+  return result.data
+}
+
+export async function searchEmailsLegacy(
+  query: string,
+  limit = 25,
+): Promise<Email[]> {
+  const result = await searchEmails(query, { limit })
+  return result.data
+}
+
+export async function listScreenerLegacy(): Promise<Email[]> {
+  const result = await listScreener()
+  return result.data
 }
