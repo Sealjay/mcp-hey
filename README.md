@@ -1,112 +1,92 @@
-# sealjay-template
-> A template for new repositories I create.
+# hey-mcp
 
-```
-Add a short description of your project.
-DELETE THIS COMMENT
-```
-<!-- Lang badges -->
-[![Python](https://img.shields.io/badge/--3178C6?logo=python&logoColor=ffffff)](https://www.python.org/)
-[![TypeScript](https://img.shields.io/badge/--3178C6?logo=typescript&logoColor=ffffff)](https://www.typescriptlang.org/)
-[![Bun](https://img.shields.io/badge/--3178C6?logo=bun&logoColor=ffffff)](https://bun.sh/)
+A local MCP (Model Context Protocol) server for Hey.com email integration with Claude.
 
-<!-- Cloud badges -->
-[![Azure](https://img.shields.io/badge/--3178C6?logo=microsoftazure&logoColor=ffffff)](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/?WT.mc_id=AI-MVP-5004204)
+## Features
 
-![GitHub issues](https://img.shields.io/github/issues/Sealjay/sealjay-template)
-![GitHub](https://img.shields.io/github/license/Sealjay/sealjay-template)
-![GitHub Repo stars](https://img.shields.io/github/stars/Sealjay/sealjay-template?style=social)
+- Read emails from Imbox, Feed, Paper Trail, Set Aside, Reply Later
+- Send and reply to emails
+- Search emails
+- Manage email organisation (set aside, reply later, screen in/out)
+- Lightweight (~30MB idle memory)
+- Browser-identical requests to avoid detection
+- No cloud dependencies - runs entirely locally
 
+## Requirements
 
-```
-Update the repo URL addresses for the shield templates.
-DELETE THIS COMMENT
-```
+- [Bun](https://bun.sh) 1.1 or later
+- Python 3.10 or later
+- A Hey.com account
 
-## Overview
-Describe the project in more detail.
-
-This repository is designed to be compiled and deployed to [Azure Static Web Apps](https://docs.microsoft.com/en-us/azure/static-web-apps/deploy-nextjs?WT.mc_id=AI-MVP-5004204).
-
-## Template Setup
-
-This template includes configuration for multiple languages. After creating a project from this template, **remove what you don't need**:
-
-| If not using... | Remove these files |
-|-----------------|-------------------|
-| Python | `pyproject.toml` |
-| TypeScript/JavaScript | `package.json`, `biome.json` |
-| .NET/C# | Remove C# extensions from `.devcontainer/devcontainer.json` |
-
-### Tech Stack
-
-| Language | Package Manager | Linter/Formatter | Test Runner |
-|----------|-----------------|------------------|-------------|
-| Python | [UV](https://github.com/astral-sh/uv) | [Ruff](https://github.com/astral-sh/ruff) | pytest |
-| TypeScript | [Bun](https://bun.sh/) | [Biome](https://biomejs.dev/) | `bun test` |
-
-## Getting Started
-
-You can use a [dev container](https://docs.microsoft.com/en-us/azure-sphere/app-development/container-build-vscode?&WT.mc_id=AI-MVP-500420) to run this in VS Code, or in [GitHub Codespaces](https://github.com/features/codespaces).
-
-### TypeScript/JavaScript
+## Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/YOUR_USERNAME/hey-mcp.git
+cd hey-mcp
+
 # Install dependencies
 bun install
+pip install -r auth/requirements.txt
 
-# Run tests
-bun test
-
-# Lint and format
-bun run format
+# First run - will open browser for Hey.com login
+bun run dev
 ```
 
-### Python
+## Claude Desktop Configuration
 
-```bash
-# Install dependencies
-uv sync
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
-# Run tests
-uv run pytest
-
-# Lint and format
-uv run ruff check . --fix
-uv run ruff format .
+```json
+{
+  "mcpServers": {
+    "hey": {
+      "command": "bun",
+      "args": ["run", "/path/to/hey-mcp/src/index.ts"]
+    }
+  }
+}
 ```
 
-## Licensing
-<!-- MIT -->
-sealjay-template is available under the [MIT Licence](./LICENCE) and is freely available to End Users.
+## Available Tools
 
-```
-Update the project name.
-DELETE THIS COMMENT
-```
+| Tool                   | Description                   |
+|------------------------|-------------------------------|
+| `hey_list_imbox`       | List emails in Imbox          |
+| `hey_list_feed`        | List emails in The Feed       |
+| `hey_list_paper_trail` | List emails in Paper Trail    |
+| `hey_list_set_aside`   | List Set Aside emails         |
+| `hey_list_reply_later` | List Reply Later emails       |
+| `hey_read_email`       | Read full email content by ID |
+| `hey_search`           | Search emails by query        |
+| `hey_send_email`       | Send a new email              |
+| `hey_reply`            | Reply to an email thread      |
+| `hey_set_aside`        | Move email to Set Aside       |
+| `hey_reply_later`      | Move email to Reply Later     |
+| `hey_screen_in`        | Approve sender from Screener  |
+| `hey_screen_out`       | Reject sender from Screener   |
 
-## Solutions Referenced
-- [Infrastructure as code in Bicep](https://docs.microsoft.com/en-us/azure/azure-resource-manager/bicep/overview?&WT.mc_id=AI-MVP-500420)
+## How It Works
 
+1. On first run (or when session expires), a system webview opens for Hey.com login
+2. Session cookies are captured and stored locally
+3. The MCP server makes direct HTTP requests to Hey.com using stored cookies
+4. Requests use browser-identical TLS fingerprints and headers
 
-```
-These are provided as examples. Include links to components you have used, or delete this section.
-DELETE THIS COMMENT
-```
+## Privacy & Security
 
-## Documentation
-The `docs` folder contains [more detailed documentation](./docs/start-here.md), along with setup instructions.
+- No credentials are ever stored - only session cookies
+- Authentication happens entirely within Hey's own login page
+- All data stays on your machine
+- MCP uses stdio transport with no network exposure
 
-## Contact
-Feel free to contact me [on LinkedIn](https://linkedin.com/in/chrislloydjones/). For bugs, please [raise an issue on GitHub](https://github.com/Sealjay/sealjay-template/issues).
-```
-Update the repo URL.
-DELETE THIS COMMENT
-```
+## Limitations
 
-## Contributing
-Contributions are more than welcome! This repository uses [GitHub flow](https://guides.github.com/introduction/flow/) with conventional commits.
+- No real-time notifications (polling only)
+- Attachment uploads not yet supported
+- Single account only
+- May break if Hey.com changes their frontend
 
-```
-DELETE THIS COMMENT
-```
+## License
+
+MIT

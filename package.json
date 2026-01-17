@@ -1,15 +1,22 @@
 {
-	"name": "project-name",
-	"version": "0.1.0",
-	"private": true,
-	"type": "module",
-	"scripts": {
-		"test": "bun test",
-		"lint": "biome check .",
-		"lint:file": "biome check",
-		"format": "biome check --write ."
-	},
-	"devDependencies": {
-		"@biomejs/biome": "^1.9.4"
-	}
+  "name": "hey-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "bun build src/index.ts --outdir=dist --target=bun",
+    "test": "bun test",
+    "lint": "biome check .",
+    "lint:file": "biome check",
+    "format": "biome check --write ."
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "node-html-parser": "^6.1.13"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/bun": "latest"
+  }
 }
