@@ -1,3 +1,4 @@
+import { invalidateForAction, updateReadStatus } from "../cache"
 import { heyClient } from "../hey-client"
 
 export interface OrganiseResult {
@@ -21,9 +22,11 @@ export async function setAside(emailId: string): Promise<OrganiseResult> {
     )
 
     if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("set_aside", emailId)
       return { success: true }
     }
     if (response.status === 302) {
+      invalidateForAction("set_aside", emailId)
       return { success: true }
     }
     return {
@@ -53,9 +56,11 @@ export async function replyLater(emailId: string): Promise<OrganiseResult> {
     )
 
     if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("reply_later", emailId)
       return { success: true }
     }
     if (response.status === 302) {
+      invalidateForAction("reply_later", emailId)
       return { success: true }
     }
     return {
@@ -86,9 +91,11 @@ export async function removeFromSetAside(
     )
 
     if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("set_aside", emailId)
       return { success: true }
     }
     if (response.status === 302) {
+      invalidateForAction("set_aside", emailId)
       return { success: true }
     }
     return {
@@ -119,9 +126,11 @@ export async function removeFromReplyLater(
     )
 
     if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("reply_later", emailId)
       return { success: true }
     }
     if (response.status === 302) {
+      invalidateForAction("reply_later", emailId)
       return { success: true }
     }
     return {
@@ -155,9 +164,11 @@ export async function screenIn(senderEmail: string): Promise<OrganiseResult> {
     )
 
     if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("archive") // Screener changes affect imbox
       return { success: true }
     }
     if (response.status === 302) {
+      invalidateForAction("archive")
       return { success: true }
     }
     return {
@@ -191,9 +202,11 @@ export async function screenOut(senderEmail: string): Promise<OrganiseResult> {
     )
 
     if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("delete") // Screened out emails are removed
       return { success: true }
     }
     if (response.status === 302) {
+      invalidateForAction("delete")
       return { success: true }
     }
     return {
@@ -223,9 +236,11 @@ export async function markAsRead(emailId: string): Promise<OrganiseResult> {
     )
 
     if (response.status >= 200 && response.status < 300) {
+      updateReadStatus(emailId, true)
       return { success: true }
     }
     if (response.status === 302) {
+      updateReadStatus(emailId, true)
       return { success: true }
     }
     return {
@@ -254,9 +269,11 @@ export async function markAsUnread(emailId: string): Promise<OrganiseResult> {
     )
 
     if (response.status >= 200 && response.status < 300) {
+      updateReadStatus(emailId, false)
       return { success: true }
     }
     if (response.status === 302) {
+      updateReadStatus(emailId, false)
       return { success: true }
     }
     return {
