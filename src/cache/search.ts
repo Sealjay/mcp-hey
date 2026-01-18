@@ -4,7 +4,7 @@
  */
 
 import type { Email } from "../tools/read"
-import { query, queryOne, unixNow } from "./db"
+import { execute, query, queryOne, unixNow } from "./db"
 import type { CacheMetadata } from "./messages"
 import { TTL_CONFIG } from "./schema"
 
@@ -264,17 +264,15 @@ function sanitizeFtsQuery(input: string): string | null {
  * Use after bulk imports or if index becomes corrupted.
  */
 export function rebuildFtsIndex(): void {
-  const { query: runQuery } = require("./db")
-
   // Delete all FTS content
-  runQuery("DELETE FROM messages_fts").run()
+  execute("DELETE FROM messages_fts")
 
   // Rebuild from messages table
-  runQuery(
+  execute(
     `INSERT INTO messages_fts(rowid, sender_name, sender_email, subject, snippet)
      SELECT rowid, sender_name, sender_email, subject, snippet FROM messages`,
-  ).run()
+  )
 
-  // Optimize the index
-  runQuery("INSERT INTO messages_fts(messages_fts) VALUES('optimize')").run()
+  // Optimise the index
+  execute("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
 }

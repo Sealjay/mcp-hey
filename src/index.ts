@@ -31,12 +31,81 @@ import { replyToEmail, sendEmail } from "./tools/send"
 
 function sanitiseError(error: unknown): string {
   if (error instanceof Error) {
-    // Remove any file paths or sensitive info
+    // Remove any file paths, URLs, emails, or sensitive info
     return error.message
       .replace(/\/[^\s]+/g, "[path]")
       .replace(/Bearer [^\s]+/g, "[token]")
+      .replace(/https?:\/\/[^\s]+/g, "[url]")
+      .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "[email]")
   }
   return "An unknown error occurred"
+}
+
+/**
+ * Validate and clamp a numeric parameter within bounds.
+ */
+function clampNumber(
+  value: unknown,
+  defaultVal: number,
+  min: number,
+  max: number,
+): number {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return defaultVal
+  }
+  return Math.max(min, Math.min(Math.floor(value), max))
+}
+
+/**
+ * Validate a string ID parameter.
+ * IDs should be alphanumeric with reasonable length.
+ */
+function validateId(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null
+  }
+  const trimmed = value.trim()
+  // IDs should be 1-100 chars, alphanumeric with hyphens/underscores
+  if (trimmed.length === 0 || trimmed.length > 100) {
+    return null
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
+    return null
+  }
+  return trimmed
+}
+
+/**
+ * Validate a search query parameter.
+ */
+function validateQuery(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null
+  }
+  const trimmed = value.trim()
+  // Queries should be 1-500 chars
+  if (trimmed.length === 0 || trimmed.length > 500) {
+    return null
+  }
+  return trimmed
+}
+
+/**
+ * Validate an email address.
+ */
+function validateEmail(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null
+  }
+  const trimmed = value.trim().toLowerCase()
+  // Basic email validation
+  if (trimmed.length === 0 || trimmed.length > 254) {
+    return null
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    return null
+  }
+  return trimmed
 }
 
 // Tool definitions
@@ -349,22 +418,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (name) {
       // Reading tools
       case "hey_list_imbox": {
-        const limit = (args?.limit as number) ?? 25
-        const page = (args?.page as number) ?? 1
+        const limit = clampNumber(args?.limit, 25, 1, 100)
+        const page = clampNumber(args?.page, 1, 1, 1000)
         const forceRefresh = (args?.force_refresh as boolean) ?? false
         result = await listImbox({ limit, page, forceRefresh })
         break
       }
       case "hey_list_feed": {
-        const limit = (args?.limit as number) ?? 25
-        const page = (args?.page as number) ?? 1
+        const limit = clampNumber(args?.limit, 25, 1, 100)
+        const page = clampNumber(args?.page, 1, 1, 1000)
         const forceRefresh = (args?.force_refresh as boolean) ?? false
         result = await listFeed({ limit, page, forceRefresh })
         break
       }
       case "hey_list_paper_trail": {
-        const limit = (args?.limit as number) ?? 25
-        const page = (args?.page as number) ?? 1
+        const limit = clampNumber(args?.limit, 25, 1, 100)
+        const page = clampNumber(args?.page, 1, 1, 1000)
         const forceRefresh = (args?.force_refresh as boolean) ?? false
         result = await listPaperTrail({ limit, page, forceRefresh })
         break
@@ -385,12 +454,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break
       }
       case "hey_read_email": {
-        const id = args?.id as string
+        const id = validateId(args?.id)
         const format = (args?.format as "html" | "text") ?? "html"
         const forceRefresh = (args?.force_refresh as boolean) ?? false
         if (!id) {
           return {
-            content: [{ type: "text", text: "Error: id is required" }],
+            content: [
+              { type: "text", text: "Error: id is required and must be valid" },
+            ],
             isError: true,
           }
         }
@@ -398,12 +469,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break
       }
       case "hey_search": {
-        const query = args?.query as string
-        const limit = (args?.limit as number) ?? 25
+        const query = validateQuery(args?.query)
+        const limit = clampNumber(args?.limit, 25, 1, 100)
         const forceRefresh = (args?.force_refresh as boolean) ?? false
         if (!query) {
           return {
-            content: [{ type: "text", text: "Error: query is required" }],
+            content: [
+              {
+                type: "text",
+                text: "Error: query is required (1-500 characters)",
+              },
+            ],
             isError: true,
           }
         }
@@ -433,27 +509,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break
       }
       case "hey_reply": {
-        const threadId = args?.thread_id as string
+        const threadId = validateId(args?.thread_id)
         const body = args?.body as string
 
-        if (!threadId || !body) {
+        if (!threadId) {
           return {
             content: [
-              { type: "text", text: "Error: thread_id and body are required" },
+              {
+                type: "text",
+                text: "Error: thread_id is required and must be valid",
+              },
             ],
             isError: true,
           }
         }
-        result = await replyToEmail({ threadId, body })
+        if (!body || typeof body !== "string" || body.trim().length === 0) {
+          return {
+            content: [{ type: "text", text: "Error: body is required" }],
+            isError: true,
+          }
+        }
+        result = await replyToEmail({ threadId, body: body.trim() })
         break
       }
 
       // Organisation tools
       case "hey_set_aside": {
-        const id = args?.id as string
+        const id = validateId(args?.id)
         if (!id) {
           return {
-            content: [{ type: "text", text: "Error: id is required" }],
+            content: [
+              { type: "text", text: "Error: id is required and must be valid" },
+            ],
             isError: true,
           }
         }
@@ -461,10 +548,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break
       }
       case "hey_reply_later": {
-        const id = args?.id as string
+        const id = validateId(args?.id)
         if (!id) {
           return {
-            content: [{ type: "text", text: "Error: id is required" }],
+            content: [
+              { type: "text", text: "Error: id is required and must be valid" },
+            ],
             isError: true,
           }
         }
@@ -472,11 +561,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break
       }
       case "hey_screen_in": {
-        const senderEmail = args?.sender_email as string
+        const senderEmail = validateEmail(args?.sender_email)
         if (!senderEmail) {
           return {
             content: [
-              { type: "text", text: "Error: sender_email is required" },
+              {
+                type: "text",
+                text: "Error: sender_email is required and must be a valid email",
+              },
             ],
             isError: true,
           }
@@ -485,11 +577,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break
       }
       case "hey_screen_out": {
-        const senderEmail = args?.sender_email as string
+        const senderEmail = validateEmail(args?.sender_email)
         if (!senderEmail) {
           return {
             content: [
-              { type: "text", text: "Error: sender_email is required" },
+              {
+                type: "text",
+                text: "Error: sender_email is required and must be a valid email",
+              },
             ],
             isError: true,
           }

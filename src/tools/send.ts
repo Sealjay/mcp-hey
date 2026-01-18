@@ -7,7 +7,33 @@ interface AccountInfo {
   senderEmail: string
 }
 
+// Cache account info per session (doesn't change)
+const accountInfoCache: { value: AccountInfo | null } = { value: null }
+
+/**
+ * Validate an email address format.
+ */
+function isValidEmail(email: string): boolean {
+  const trimmed = email.trim().toLowerCase()
+  if (trimmed.length === 0 || trimmed.length > 254) {
+    return false
+  }
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)
+}
+
+/**
+ * Validate all recipients and return invalid ones.
+ */
+function findInvalidEmails(emails: string[]): string[] {
+  return emails.filter((email) => !isValidEmail(email))
+}
+
 async function getAccountInfo(): Promise<AccountInfo> {
+  // Return cached account info if available
+  if (accountInfoCache.value) {
+    return accountInfoCache.value
+  }
+
   const html = await heyClient.fetchHtml("/my/imbox")
   const root = parseHtml(html)
 
@@ -55,7 +81,9 @@ async function getAccountInfo(): Promise<AccountInfo> {
     throw new Error("Could not determine Hey.com account information")
   }
 
-  return { senderId, senderEmail }
+  const accountInfo = { senderId, senderEmail }
+  accountInfoCache.value = accountInfo
+  return accountInfo
 }
 
 export interface SendEmailParams {
@@ -76,6 +104,26 @@ export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
 
   if (to.length === 0) {
     return { success: false, error: "At least one recipient is required" }
+  }
+
+  // Validate recipient email formats
+  const invalidTo = findInvalidEmails(to)
+  if (invalidTo.length > 0) {
+    return {
+      success: false,
+      error: `Invalid recipient email(s): ${invalidTo.join(", ")}`,
+    }
+  }
+
+  // Validate CC email formats if present
+  if (cc && cc.length > 0) {
+    const invalidCc = findInvalidEmails(cc)
+    if (invalidCc.length > 0) {
+      return {
+        success: false,
+        error: `Invalid CC email(s): ${invalidCc.join(", ")}`,
+      }
+    }
   }
 
   if (!subject.trim()) {
