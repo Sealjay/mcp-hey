@@ -9,15 +9,15 @@ import {
 
 const BASE_URL = "https://app.hey.com"
 
-// Browser-identical headers for Chrome 125 on macOS
+// Browser-identical headers for Chrome 130 on macOS
 function getBrowserHeaders(session: Session): Record<string, string> {
   return {
     Host: "app.hey.com",
-    "sec-ch-ua": '"Chromium";v="125", "Google Chrome";v="125"',
+    "sec-ch-ua": '"Chromium";v="130", "Google Chrome";v="130"',
     "sec-ch-ua-mobile": "?0",
     "sec-ch-ua-platform": '"macOS"',
     "User-Agent":
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
     Accept:
       "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Sec-Fetch-Site": "same-origin",
@@ -36,11 +36,11 @@ function getAjaxHeaders(
 ): Record<string, string> {
   const headers: Record<string, string> = {
     Host: "app.hey.com",
-    "sec-ch-ua": '"Chromium";v="125", "Google Chrome";v="125"',
+    "sec-ch-ua": '"Chromium";v="130", "Google Chrome";v="130"',
     "sec-ch-ua-mobile": "?0",
     "sec-ch-ua-platform": '"macOS"',
     "User-Agent":
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
     Accept: "text/html, application/xhtml+xml",
     "Accept-Encoding": "gzip, deflate, br",
     "Accept-Language": "en-GB,en;q=0.9",
@@ -64,6 +64,14 @@ interface RateLimitInfo {
   until?: number
 }
 
+// Proactive rate limiter state
+const rateLimiter = {
+  lastRequestTime: 0,
+  minIntervalMs: 100, // Minimum 100ms between requests
+  remainingQuota: 100, // Start with conservative estimate
+  quotaResetTime: 0,
+}
+
 function parseRateLimitHeaders(response: Response): RateLimitInfo | null {
   const remaining = response.headers.get("x-ratelimit-remaining")
   const limit = response.headers.get("x-ratelimit-limit")
@@ -84,6 +92,48 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/**
+ * Proactive rate limiting - waits if we're approaching limits.
+ */
+async function waitForRateLimit(): Promise<void> {
+  const now = Date.now()
+
+  // Check if quota has reset (assume 60s window if no reset time known)
+  if (rateLimiter.quotaResetTime > 0 && now > rateLimiter.quotaResetTime) {
+    rateLimiter.remainingQuota = 100
+    rateLimiter.quotaResetTime = 0
+  }
+
+  // Enforce minimum interval between requests
+  const timeSinceLastRequest = now - rateLimiter.lastRequestTime
+  if (timeSinceLastRequest < rateLimiter.minIntervalMs) {
+    await sleep(rateLimiter.minIntervalMs - timeSinceLastRequest)
+  }
+
+  // If quota is low, add progressive delays
+  if (rateLimiter.remainingQuota < 20) {
+    const delayMs = Math.max(
+      0,
+      Math.min(500, (20 - rateLimiter.remainingQuota) * 50),
+    )
+    await sleep(delayMs)
+  }
+
+  // Decrement quota optimistically (will be corrected by response headers)
+  rateLimiter.remainingQuota = Math.max(0, rateLimiter.remainingQuota - 1)
+  rateLimiter.lastRequestTime = Date.now()
+}
+
+/**
+ * Update rate limiter state from response headers.
+ */
+function updateRateLimiter(rateLimit: RateLimitInfo): void {
+  rateLimiter.remainingQuota = rateLimit.remaining
+  if (rateLimit.until) {
+    rateLimiter.quotaResetTime = rateLimit.until * 1000
+  }
+}
+
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
@@ -93,11 +143,16 @@ async function fetchWithRetry(
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
+      // Proactive rate limiting before request
+      await waitForRateLimit()
+
       const response = await fetch(url, options)
 
-      // Check rate limiting
+      // Check rate limiting from response
       const rateLimit = parseRateLimitHeaders(response)
       if (rateLimit) {
+        updateRateLimiter(rateLimit)
+
         if (rateLimit.remaining === 0 && rateLimit.until) {
           const waitMs = rateLimit.until * 1000 - Date.now()
           if (waitMs > 0) {
@@ -105,9 +160,6 @@ async function fetchWithRetry(
             await sleep(waitMs)
             continue
           }
-        } else if (rateLimit.remaining < 50) {
-          // Add small delay when approaching rate limit
-          await sleep(100)
         }
       }
 
@@ -124,8 +176,13 @@ async function fetchWithRetry(
   throw lastError || new Error("Request failed after retries")
 }
 
+// CSRF token cache TTL (5 minutes)
+const CSRF_TOKEN_TTL_MS = 5 * 60 * 1000
+
 export class HeyClient {
   private session: Session | null = null
+  private cachedCsrfToken: string | null = null
+  private csrfTokenExpiry = 0
 
   async ensureSession(): Promise<Session> {
     if (!this.session) {
@@ -177,6 +234,11 @@ export class HeyClient {
   }
 
   async getCsrfToken(): Promise<string> {
+    // Return cached token if still valid
+    if (this.cachedCsrfToken && Date.now() < this.csrfTokenExpiry) {
+      return this.cachedCsrfToken
+    }
+
     const html = await this.fetchHtml("/my/imbox")
     const root = parseHtml(html)
     const meta = root.querySelector('meta[name="csrf-token"]')
@@ -190,7 +252,20 @@ export class HeyClient {
       throw new Error("CSRF token is empty")
     }
 
+    // Cache the token
+    this.cachedCsrfToken = token
+    this.csrfTokenExpiry = Date.now() + CSRF_TOKEN_TTL_MS
+
     return token
+  }
+
+  /**
+   * Invalidate the cached CSRF token.
+   * Call this if a request fails with a CSRF error.
+   */
+  invalidateCsrfToken(): void {
+    this.cachedCsrfToken = null
+    this.csrfTokenExpiry = 0
   }
 
   async post(

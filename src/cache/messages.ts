@@ -258,17 +258,24 @@ export function getCachedSearch(
   searchQuery: string,
 ): { emails: Email[]; metadata: CacheMetadata } | null {
   const queryHash = hashQuery(searchQuery)
+  const normalizedQuery = searchQuery.toLowerCase().trim()
 
   const cached = queryOne<{
+    query: string
     result_ids: string
     cached_at: number
     ttl_seconds: number
   }>(
-    "SELECT result_ids, cached_at, ttl_seconds FROM search_cache WHERE query_hash = ?",
+    "SELECT query, result_ids, cached_at, ttl_seconds FROM search_cache WHERE query_hash = ?",
     [queryHash],
   )
 
   if (!cached || isExpired(cached.cached_at, cached.ttl_seconds)) {
+    return null
+  }
+
+  // Verify query matches to prevent hash collision issues
+  if (cached.query.toLowerCase().trim() !== normalizedQuery) {
     return null
   }
 

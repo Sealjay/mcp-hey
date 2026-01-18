@@ -129,23 +129,28 @@ export function isExpired(cachedAt: number, ttlSeconds: number): boolean {
 
 /**
  * Generate a hash for search query caching.
+ * Uses Bun's native hash for better collision resistance (64-bit).
  */
 export function hashQuery(query: string): string {
-  // Simple hash for query deduplication
-  let hash = 0
-  for (let i = 0; i < query.length; i++) {
-    const char = query.charCodeAt(i)
-    hash = (hash << 5) - hash + char
-    hash = hash & hash // Convert to 32-bit integer
-  }
-  return hash.toString(36)
+  // Normalize query before hashing for consistent results
+  const normalized = query.toLowerCase().trim()
+  // Bun.hash returns a 64-bit hash as bigint, convert to base36 string
+  return Bun.hash(normalized).toString(36)
 }
+
+// Cache size limits
+const CACHE_LIMITS = {
+  maxMessages: 10000, // Maximum cached messages
+  maxBodies: 1000, // Maximum cached message bodies
+  maxSearchResults: 500, // Maximum cached search results
+} as const
 
 /**
  * Run periodic maintenance tasks.
  */
 export function runMaintenance(): void {
   const database = getDatabase()
+  const now = unixNow()
 
   // Clean expired search cache
   database
@@ -153,7 +158,7 @@ export function runMaintenance(): void {
       `DELETE FROM search_cache
      WHERE cached_at + ttl_seconds < ?`,
     )
-    .run(unixNow())
+    .run(now)
 
   // Clean old sync queue entries
   database
@@ -162,7 +167,43 @@ export function runMaintenance(): void {
      WHERE status = 'completed'
        AND created_at < ?`,
     )
-    .run(unixNow() - 86400) // 24 hours
+    .run(now - 86400) // 24 hours
+
+  // Evict oldest messages if over limit (keep most recent)
+  database
+    .query(
+      `DELETE FROM messages
+     WHERE id NOT IN (
+       SELECT id FROM messages
+       ORDER BY cached_at DESC
+       LIMIT ?
+     )`,
+    )
+    .run(CACHE_LIMITS.maxMessages)
+
+  // Evict oldest message bodies if over limit
+  database
+    .query(
+      `DELETE FROM message_bodies
+     WHERE message_id NOT IN (
+       SELECT message_id FROM message_bodies
+       ORDER BY cached_at DESC
+       LIMIT ?
+     )`,
+    )
+    .run(CACHE_LIMITS.maxBodies)
+
+  // Evict oldest search results if over limit
+  database
+    .query(
+      `DELETE FROM search_cache
+     WHERE query_hash NOT IN (
+       SELECT query_hash FROM search_cache
+       ORDER BY cached_at DESC
+       LIMIT ?
+     )`,
+    )
+    .run(CACHE_LIMITS.maxSearchResults)
 
   // Incremental vacuum
   database.exec("PRAGMA incremental_vacuum(100)")

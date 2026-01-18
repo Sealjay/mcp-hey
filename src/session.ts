@@ -60,7 +60,7 @@ export async function validateSession(session: Session): Promise<boolean> {
       headers: {
         Host: "app.hey.com",
         "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
         Accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         Cookie: cookieHeader,
@@ -125,10 +125,4 @@ export async function ensureValidSession(): Promise<Session | null> {
   // Load the new session
   session = await loadSession()
   return session
-}
-
-export function isSessionExpiringSoon(session: Session): boolean {
-  // Check if any cookies are expiring within 24 hours
-  const oneDayFromNow = Date.now() / 1000 + 24 * 60 * 60
-  return session.cookies.some((c) => c.expiry && c.expiry < oneDayFromNow)
 }

@@ -7,9 +7,9 @@
     "dev": "bun run src/index.ts",
     "build": "bun build src/index.ts --outdir=dist --target=bun",
     "test": "bun test",
-    "lint": "biome check .",
-    "lint:file": "biome check",
-    "format": "biome check --write ."
+    "lint": "bunx --bun biome check .",
+    "lint:file": "bunx --bun biome check",
+    "format": "bunx --bun biome check --write ."
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
