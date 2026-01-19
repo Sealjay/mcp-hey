@@ -165,6 +165,14 @@ export function runMaintenance(): void {
     )
     .run(now)
 
+  // Clean expired folder HTML cache
+  database
+    .query(
+      `DELETE FROM folder_html
+     WHERE cached_at + ttl_seconds < ?`,
+    )
+    .run(now)
+
   // Clean old sync queue entries
   database
     .query(

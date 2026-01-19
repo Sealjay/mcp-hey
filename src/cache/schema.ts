@@ -3,7 +3,7 @@
  * Separates lightweight metadata from full content for fast queries.
  */
 
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 export const INIT_SCHEMA = `
 -- Pragma settings for optimal caching performance
@@ -114,6 +114,14 @@ CREATE TABLE IF NOT EXISTS search_cache (
     result_count INTEGER NOT NULL,
     cached_at INTEGER NOT NULL,
     ttl_seconds INTEGER DEFAULT 60
+);
+
+-- Folder HTML cache (for re-parsing summaries without network fetch)
+CREATE TABLE IF NOT EXISTS folder_html (
+    folder TEXT PRIMARY KEY,
+    html TEXT NOT NULL,
+    cached_at INTEGER NOT NULL,
+    ttl_seconds INTEGER NOT NULL
 );
 
 -- Indexes for common queries

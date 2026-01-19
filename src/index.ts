@@ -18,11 +18,17 @@ import {
 import { heyClient } from "./hey-client"
 import {
   type BubbleUpSlot,
+  addLabel,
+  addToCollection,
   bubbleUp,
   ignoreThread,
   markAsNotSpam,
   markAsSpam,
   markAsUnseen,
+  removeFromCollection,
+  removeFromReplyLater,
+  removeFromSetAside,
+  removeLabel,
   replyLater,
   restoreFromTrash,
   screenIn,
@@ -34,6 +40,8 @@ import {
 } from "./tools/organise"
 import {
   getImboxSummary,
+  listCollectionEmails,
+  listCollections,
   listDrafts,
   listFeed,
   listImbox,
@@ -356,6 +364,115 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "hey_list_collections",
+    description: "List all collections in Hey.com.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
+    name: "hey_list_collection_emails",
+    description:
+      "List emails in a specific collection. Returns cached results unless force_refresh=true.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        collection_id: {
+          type: "string",
+          description: "The collection ID to list emails from",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of emails to return (default: 25)",
+        },
+        page: {
+          type: "number",
+          description: "Page number for pagination (default: 1)",
+        },
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and fetch fresh data (default: false)",
+        },
+      },
+      required: ["collection_id"],
+    },
+  },
+  {
+    name: "hey_add_label",
+    description: "Add a label to an email thread",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        topic_id: {
+          type: "string",
+          description: "The topic/thread ID to label",
+        },
+        label_id: {
+          type: "string",
+          description:
+            "The label ID to apply (use hey_list_labels to see available labels)",
+        },
+      },
+      required: ["topic_id", "label_id"],
+    },
+  },
+  {
+    name: "hey_remove_label",
+    description: "Remove a label from an email thread",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        topic_id: {
+          type: "string",
+          description: "The topic/thread ID to unlabel",
+        },
+        label_id: {
+          type: "string",
+          description: "The label ID to remove",
+        },
+      },
+      required: ["topic_id", "label_id"],
+    },
+  },
+  {
+    name: "hey_add_to_collection",
+    description: "Add an email thread to a collection",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        topic_id: {
+          type: "string",
+          description: "The topic/thread ID to add to the collection",
+        },
+        collection_id: {
+          type: "string",
+          description:
+            "The collection ID (use hey_list_collections to see available collections)",
+        },
+      },
+      required: ["topic_id", "collection_id"],
+    },
+  },
+  {
+    name: "hey_remove_from_collection",
+    description: "Remove an email thread from a collection",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        topic_id: {
+          type: "string",
+          description: "The topic/thread ID to remove from the collection",
+        },
+        collection_id: {
+          type: "string",
+          description: "The collection ID",
+        },
+      },
+      required: ["topic_id", "collection_id"],
+    },
+  },
+  {
     name: "hey_read_email",
     description:
       "Read the full content of an email by ID. Returns cached content unless force_refresh=true.",
@@ -481,6 +598,36 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "hey_unset_aside",
+    description:
+      "Remove an email from Set Aside (move it back to the Imbox or its original location)",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: {
+          type: "string",
+          description: "The email ID to remove from Set Aside",
+        },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "hey_remove_reply_later",
+    description:
+      "Remove an email from Reply Later (move it back to the Imbox or its original location)",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: {
+          type: "string",
+          description: "The email ID to remove from Reply Later",
+        },
+      },
+      required: ["id"],
+    },
+  },
+  {
     name: "hey_screen_in",
     description: "Approve a sender from the Screener (allow future emails)",
     inputSchema: {
@@ -600,17 +747,18 @@ const tools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        id: {
+        posting_id: {
           type: "string",
-          description: "The topic/thread ID to schedule",
+          description: "The posting ID to schedule",
         },
         slot: {
           type: "string",
-          enum: ["morning", "afternoon", "evening", "weekend"],
-          description: "When to bubble up the email",
+          enum: ["now", "today", "tomorrow", "weekend", "next_week"],
+          description:
+            "When to bubble up: now (immediately), today (evening), tomorrow (morning), weekend (Saturday), next_week (Monday)",
         },
       },
-      required: ["id", "slot"],
+      required: ["posting_id", "slot"],
     },
   },
   {
@@ -771,6 +919,145 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await listLabelEmails(labelId, { limit, page, forceRefresh })
         break
       }
+      case "hey_list_collections": {
+        result = await listCollections()
+        break
+      }
+      case "hey_list_collection_emails": {
+        const collectionId = validateId(args?.collection_id)
+        const limit = clampNumber(args?.limit, 25, 1, 100)
+        const page = clampNumber(args?.page, 1, 1, 1000)
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
+        if (!collectionId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: collection_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await listCollectionEmails(collectionId, {
+          limit,
+          page,
+          forceRefresh,
+        })
+        break
+      }
+      case "hey_add_label": {
+        const topicId = validateId(args?.topic_id)
+        const labelId = validateId(args?.label_id)
+        if (!topicId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: topic_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        if (!labelId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: label_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await addLabel(topicId, labelId)
+        break
+      }
+      case "hey_remove_label": {
+        const topicId = validateId(args?.topic_id)
+        const labelId = validateId(args?.label_id)
+        if (!topicId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: topic_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        if (!labelId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: label_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await removeLabel(topicId, labelId)
+        break
+      }
+      case "hey_add_to_collection": {
+        const topicId = validateId(args?.topic_id)
+        const collectionId = validateId(args?.collection_id)
+        if (!topicId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: topic_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        if (!collectionId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: collection_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await addToCollection(topicId, collectionId)
+        break
+      }
+      case "hey_remove_from_collection": {
+        const topicId = validateId(args?.topic_id)
+        const collectionId = validateId(args?.collection_id)
+        if (!topicId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: topic_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        if (!collectionId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: collection_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await removeFromCollection(topicId, collectionId)
+        break
+      }
       case "hey_read_email": {
         const id = validateId(args?.id)
         const format = (args?.format as "html" | "text") ?? "html"
@@ -876,6 +1163,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
         result = await replyLater(id)
+        break
+      }
+      case "hey_unset_aside": {
+        const id = validateId(args?.id)
+        if (!id) {
+          return {
+            content: [
+              { type: "text", text: "Error: id is required and must be valid" },
+            ],
+            isError: true,
+          }
+        }
+        result = await removeFromSetAside(id)
+        break
+      }
+      case "hey_remove_reply_later": {
+        const id = validateId(args?.id)
+        if (!id) {
+          return {
+            content: [
+              { type: "text", text: "Error: id is required and must be valid" },
+            ],
+            isError: true,
+          }
+        }
+        result = await removeFromReplyLater(id)
         break
       }
       case "hey_screen_in": {
@@ -992,31 +1305,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break
       }
       case "hey_bubble_up": {
-        const id = validateId(args?.id)
+        const postingId = validateId(args?.posting_id)
         const slot = args?.slot as BubbleUpSlot
-        if (!id) {
+        if (!postingId) {
           return {
             content: [
-              { type: "text", text: "Error: id is required and must be valid" },
+              {
+                type: "text",
+                text: "Error: posting_id is required and must be valid",
+              },
             ],
             isError: true,
           }
         }
         if (
           !slot ||
-          !["morning", "afternoon", "evening", "weekend"].includes(slot)
+          !["now", "today", "tomorrow", "weekend", "next_week"].includes(slot)
         ) {
           return {
             content: [
               {
                 type: "text",
-                text: "Error: slot is required and must be one of: morning, afternoon, evening, weekend",
+                text: "Error: slot is required and must be one of: now, today, tomorrow, weekend, next_week",
               },
             ],
             isError: true,
           }
         }
-        result = await bubbleUp(id, slot)
+        result = await bubbleUp(postingId, slot)
         break
       }
       case "hey_ignore_thread": {
