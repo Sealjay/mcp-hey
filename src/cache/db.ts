@@ -32,14 +32,19 @@ export function getDatabase(): Database {
 }
 
 function initializeSchema(database: Database): void {
-  // Check current schema version
-  const versionResult = database
-    .query("SELECT value FROM schema_info WHERE key = 'version'")
-    .get() as { value: string } | null
-
-  const currentVersion = versionResult
-    ? Number.parseInt(versionResult.value, 10)
-    : 0
+  // Check current schema version (handle case where table doesn't exist yet)
+  let currentVersion = 0
+  try {
+    const versionResult = database
+      .query("SELECT value FROM schema_info WHERE key = 'version'")
+      .get() as { value: string } | null
+    currentVersion = versionResult
+      ? Number.parseInt(versionResult.value, 10)
+      : 0
+  } catch {
+    // Table doesn't exist yet, need full initialization
+    currentVersion = 0
+  }
 
   if (currentVersion < SCHEMA_VERSION) {
     console.error(`[hey-mcp] Initializing cache schema v${SCHEMA_VERSION}...`)

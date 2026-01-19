@@ -239,7 +239,7 @@ export class HeyClient {
       return this.cachedCsrfToken
     }
 
-    const html = await this.fetchHtml("/my/imbox")
+    const html = await this.fetchHtml("/imbox")
     const root = parseHtml(html)
     const meta = root.querySelector('meta[name="csrf-token"]')
 

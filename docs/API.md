@@ -62,7 +62,7 @@ Best practices:
 
 ### Reading Endpoints
 
-#### GET /my/imbox
+#### GET /imbox
 List emails in the Imbox (important emails).
 
 **Query Parameters:**
@@ -72,7 +72,7 @@ List emails in the Imbox (important emails).
 
 ---
 
-#### GET /my/the_feed
+#### GET /feedbox
 List emails in The Feed (newsletters, notifications).
 
 **Query Parameters:**
@@ -82,7 +82,7 @@ List emails in The Feed (newsletters, notifications).
 
 ---
 
-#### GET /my/paper_trail
+#### GET /paper_trail
 List emails in Paper Trail (receipts, confirmations).
 
 **Query Parameters:**
@@ -92,24 +92,34 @@ List emails in Paper Trail (receipts, confirmations).
 
 ---
 
-#### GET /my/set_aside
+#### GET /set_aside
 List emails in the Set Aside stack.
 
 **Response:** HTML page with email list
 
 ---
 
-#### GET /my/reply_later
+#### GET /reply_later
 List emails in the Reply Later stack.
 
 **Response:** HTML page with email list
 
 ---
 
-#### GET /my/screener
+#### GET /clearances
 List emails waiting in the Screener.
 
 **Response:** HTML page with screener entries
+
+---
+
+#### GET /topics/{id}
+Get a single email thread (HTML format).
+
+**Path Parameters:**
+- `id`: Topic/Thread ID
+
+**Response:** HTML page with email thread content
 
 ---
 
@@ -133,13 +143,60 @@ Get a single email message (RFC822 text format).
 
 ---
 
-#### GET /my/search
+#### GET /search
 Search emails.
 
 **Query Parameters:**
 - `q`: Search query string
 
 **Response:** HTML page with search results
+
+---
+
+#### GET /topics/trash
+List trashed emails.
+
+**Response:** HTML page with trashed emails
+
+---
+
+#### GET /topics/spam
+List spam emails.
+
+**Response:** HTML page with spam emails
+
+---
+
+#### GET /entries/drafts
+List draft emails.
+
+**Response:** HTML page with drafts
+
+---
+
+### Labels/Folders Endpoints
+
+#### GET /folders
+List all labels.
+
+**Response:** HTML page with all labels and their folder IDs
+
+---
+
+#### GET /folders/{id}
+View emails with a specific label.
+
+**Path Parameters:**
+- `id`: Folder/Label ID
+
+**Response:** HTML page with labelled emails
+
+---
+
+#### GET /my/navigation
+Get the navigation menu (includes all folders/labels).
+
+**Response:** HTML fragment with navigation structure
 
 ---
 
@@ -221,8 +278,18 @@ Remove an email from Reply Later.
 
 ---
 
+#### POST /clearances/{id}
+Screen in a sender (approve). The clearance ID is found from the screener page.
+
+**Path Parameters:**
+- `id`: Clearance ID
+
+**Response:** 200 OK or redirect
+
+---
+
 #### POST /screener/approvals
-Approve a sender (screen in).
+Approve a sender (screen in) by email address.
 
 **Content-Type:** `application/x-www-form-urlencoded`
 
@@ -260,6 +327,98 @@ Mark an email as unread.
 
 **Path Parameters:**
 - `id`: Entry ID
+
+**Response:** 200 OK or redirect
+
+---
+
+### Thread Status Endpoints
+
+#### POST /topics/{id}/status/trashed
+Move a thread to Trash.
+
+**Path Parameters:**
+- `id`: Topic/Thread ID
+
+**Response:** 200 OK or redirect
+
+---
+
+#### POST /topics/{id}/status/active
+Restore a thread from Trash (make active again).
+
+**Path Parameters:**
+- `id`: Topic/Thread ID
+
+**Response:** 200 OK or redirect
+
+---
+
+#### POST /topics/{id}/status/spam
+Mark a thread as Spam.
+
+**Path Parameters:**
+- `id`: Topic/Thread ID
+
+**Response:** 200 OK or redirect
+
+---
+
+#### POST /topics/{id}/status/ham
+Mark a thread as Not Spam (restore from spam).
+
+**Path Parameters:**
+- `id`: Topic/Thread ID
+
+**Response:** 200 OK or redirect
+
+---
+
+### Thread Action Endpoints
+
+#### POST /topics/{id}/unseen
+Mark a thread as unseen/unread.
+
+**Path Parameters:**
+- `id`: Topic/Thread ID
+
+**Response:** 200 OK or redirect
+
+---
+
+#### POST /topics/{id}/bubble_up
+Schedule a thread to bubble back up to Imbox.
+
+**Path Parameters:**
+- `id`: Topic/Thread ID
+
+**Query Parameters:**
+- `slot`: When to bubble up. Values include:
+  - `now` - Immediately
+  - `today` - Later today (typically 18:00)
+  - `tomorrow` - Tomorrow morning (typically 08:00)
+  - `weekend` - This weekend (typically Saturday 08:00)
+  - `next_week` - Next week (typically Monday 08:00)
+
+**Response:** 200 OK or redirect
+
+---
+
+#### POST /postings/{id}/muting
+Ignore/mute a thread (stop receiving notifications).
+
+**Path Parameters:**
+- `id`: Posting ID
+
+**Response:** 200 OK or redirect
+
+---
+
+#### DELETE /postings/{id}/muting
+Un-ignore/unmute a thread (resume receiving notifications).
+
+**Path Parameters:**
+- `id`: Posting ID
 
 **Response:** 200 OK or redirect
 

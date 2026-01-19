@@ -7,7 +7,22 @@ data/
 
 # Environment
 .env
+.env.*
 .env.local
+
+# Secrets and Keys
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+secrets/
+.secrets
+*.secret
+credentials.json
+*-credentials.json
+*.credentials
 
 # OS
 .DS_Store

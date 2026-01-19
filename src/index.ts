@@ -16,14 +16,34 @@ import {
   runMaintenance,
 } from "./cache"
 import { heyClient } from "./hey-client"
-import { replyLater, screenIn, screenOut, setAside } from "./tools/organise"
 import {
+  type BubbleUpSlot,
+  bubbleUp,
+  ignoreThread,
+  markAsNotSpam,
+  markAsSpam,
+  markAsUnseen,
+  replyLater,
+  restoreFromTrash,
+  screenIn,
+  screenInById,
+  screenOut,
+  setAside,
+  trashEmail,
+  unignoreThread,
+} from "./tools/organise"
+import {
+  listDrafts,
   listFeed,
   listImbox,
+  listLabelEmails,
+  listLabels,
   listPaperTrail,
   listReplyLater,
   listScreener,
   listSetAside,
+  listSpam,
+  listTrash,
   readEmail,
   searchEmails,
 } from "./tools/read"
@@ -220,6 +240,107 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "hey_list_trash",
+    description:
+      "List emails in the Trash. Returns cached results unless force_refresh=true.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        limit: {
+          type: "number",
+          description: "Maximum number of emails to return (default: 25)",
+        },
+        page: {
+          type: "number",
+          description: "Page number for pagination (default: 1)",
+        },
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and fetch fresh data (default: false)",
+        },
+      },
+    },
+  },
+  {
+    name: "hey_list_spam",
+    description:
+      "List emails in the Spam folder. Returns cached results unless force_refresh=true.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        limit: {
+          type: "number",
+          description: "Maximum number of emails to return (default: 25)",
+        },
+        page: {
+          type: "number",
+          description: "Page number for pagination (default: 1)",
+        },
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and fetch fresh data (default: false)",
+        },
+      },
+    },
+  },
+  {
+    name: "hey_list_drafts",
+    description:
+      "List draft emails. Returns cached results unless force_refresh=true.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        limit: {
+          type: "number",
+          description: "Maximum number of drafts to return (default: 25)",
+        },
+        page: {
+          type: "number",
+          description: "Page number for pagination (default: 1)",
+        },
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and fetch fresh data (default: false)",
+        },
+      },
+    },
+  },
+  {
+    name: "hey_list_labels",
+    description: "List all labels/folders in Hey.com.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
+    name: "hey_list_label_emails",
+    description:
+      "List emails with a specific label. Returns cached results unless force_refresh=true.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        label_id: {
+          type: "string",
+          description: "The label/folder ID to list emails from",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of emails to return (default: 25)",
+        },
+        page: {
+          type: "number",
+          description: "Page number for pagination (default: 1)",
+        },
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and fetch fresh data (default: false)",
+        },
+      },
+      required: ["label_id"],
+    },
+  },
+  {
     name: "hey_read_email",
     description:
       "Read the full content of an email by ID. Returns cached content unless force_refresh=true.",
@@ -372,6 +493,139 @@ const tools: Tool[] = [
       required: ["sender_email"],
     },
   },
+  {
+    name: "hey_screen_in_by_id",
+    description:
+      "Approve a sender from the Screener by clearance ID (alternative to sender email)",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        clearance_id: {
+          type: "string",
+          description: "The clearance ID from the screener list",
+        },
+      },
+      required: ["clearance_id"],
+    },
+  },
+  {
+    name: "hey_trash",
+    description: "Move an email thread to Trash",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: {
+          type: "string",
+          description: "The topic/thread ID to trash",
+        },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "hey_restore",
+    description: "Restore an email thread from Trash",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: {
+          type: "string",
+          description: "The topic/thread ID to restore",
+        },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "hey_spam",
+    description: "Mark an email thread as Spam",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: {
+          type: "string",
+          description: "The topic/thread ID to mark as spam",
+        },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "hey_not_spam",
+    description: "Mark an email thread as Not Spam (restore from spam folder)",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: {
+          type: "string",
+          description: "The topic/thread ID to mark as not spam",
+        },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "hey_mark_unseen",
+    description: "Mark an email thread as unseen/unread",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: {
+          type: "string",
+          description: "The topic/thread ID to mark as unseen",
+        },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "hey_bubble_up",
+    description:
+      "Schedule an email to bubble up (reappear) at a specific time slot",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: {
+          type: "string",
+          description: "The topic/thread ID to schedule",
+        },
+        slot: {
+          type: "string",
+          enum: ["morning", "afternoon", "evening", "weekend"],
+          description: "When to bubble up the email",
+        },
+      },
+      required: ["id", "slot"],
+    },
+  },
+  {
+    name: "hey_ignore_thread",
+    description: "Ignore/mute a thread (stop receiving notifications)",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        posting_id: {
+          type: "string",
+          description: "The posting ID to ignore",
+        },
+      },
+      required: ["posting_id"],
+    },
+  },
+  {
+    name: "hey_unignore_thread",
+    description: "Un-ignore/unmute a thread (resume receiving notifications)",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        posting_id: {
+          type: "string",
+          description: "The posting ID to un-ignore",
+        },
+      },
+      required: ["posting_id"],
+    },
+  },
 
   // Cache management tool
   {
@@ -451,6 +705,50 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "hey_list_screener": {
         const forceRefresh = (args?.force_refresh as boolean) ?? false
         result = await listScreener({ forceRefresh })
+        break
+      }
+      case "hey_list_trash": {
+        const limit = clampNumber(args?.limit, 25, 1, 100)
+        const page = clampNumber(args?.page, 1, 1, 1000)
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
+        result = await listTrash({ limit, page, forceRefresh })
+        break
+      }
+      case "hey_list_spam": {
+        const limit = clampNumber(args?.limit, 25, 1, 100)
+        const page = clampNumber(args?.page, 1, 1, 1000)
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
+        result = await listSpam({ limit, page, forceRefresh })
+        break
+      }
+      case "hey_list_drafts": {
+        const limit = clampNumber(args?.limit, 25, 1, 100)
+        const page = clampNumber(args?.page, 1, 1, 1000)
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
+        result = await listDrafts({ limit, page, forceRefresh })
+        break
+      }
+      case "hey_list_labels": {
+        result = await listLabels()
+        break
+      }
+      case "hey_list_label_emails": {
+        const labelId = validateId(args?.label_id)
+        const limit = clampNumber(args?.limit, 25, 1, 100)
+        const page = clampNumber(args?.page, 1, 1, 1000)
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
+        if (!labelId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: label_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await listLabelEmails(labelId, { limit, page, forceRefresh })
         break
       }
       case "hey_read_email": {
@@ -590,6 +888,147 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
         result = await screenOut(senderEmail)
+        break
+      }
+      case "hey_screen_in_by_id": {
+        const clearanceId = validateId(args?.clearance_id)
+        if (!clearanceId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: clearance_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await screenInById(clearanceId)
+        break
+      }
+      case "hey_trash": {
+        const id = validateId(args?.id)
+        if (!id) {
+          return {
+            content: [
+              { type: "text", text: "Error: id is required and must be valid" },
+            ],
+            isError: true,
+          }
+        }
+        result = await trashEmail(id)
+        break
+      }
+      case "hey_restore": {
+        const id = validateId(args?.id)
+        if (!id) {
+          return {
+            content: [
+              { type: "text", text: "Error: id is required and must be valid" },
+            ],
+            isError: true,
+          }
+        }
+        result = await restoreFromTrash(id)
+        break
+      }
+      case "hey_spam": {
+        const id = validateId(args?.id)
+        if (!id) {
+          return {
+            content: [
+              { type: "text", text: "Error: id is required and must be valid" },
+            ],
+            isError: true,
+          }
+        }
+        result = await markAsSpam(id)
+        break
+      }
+      case "hey_not_spam": {
+        const id = validateId(args?.id)
+        if (!id) {
+          return {
+            content: [
+              { type: "text", text: "Error: id is required and must be valid" },
+            ],
+            isError: true,
+          }
+        }
+        result = await markAsNotSpam(id)
+        break
+      }
+      case "hey_mark_unseen": {
+        const id = validateId(args?.id)
+        if (!id) {
+          return {
+            content: [
+              { type: "text", text: "Error: id is required and must be valid" },
+            ],
+            isError: true,
+          }
+        }
+        result = await markAsUnseen(id)
+        break
+      }
+      case "hey_bubble_up": {
+        const id = validateId(args?.id)
+        const slot = args?.slot as BubbleUpSlot
+        if (!id) {
+          return {
+            content: [
+              { type: "text", text: "Error: id is required and must be valid" },
+            ],
+            isError: true,
+          }
+        }
+        if (
+          !slot ||
+          !["morning", "afternoon", "evening", "weekend"].includes(slot)
+        ) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: slot is required and must be one of: morning, afternoon, evening, weekend",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await bubbleUp(id, slot)
+        break
+      }
+      case "hey_ignore_thread": {
+        const postingId = validateId(args?.posting_id)
+        if (!postingId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: posting_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await ignoreThread(postingId)
+        break
+      }
+      case "hey_unignore_thread": {
+        const postingId = validateId(args?.posting_id)
+        if (!postingId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: posting_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await unignoreThread(postingId)
         break
       }
 

@@ -34,7 +34,7 @@ async function getAccountInfo(): Promise<AccountInfo> {
     return accountInfoCache.value
   }
 
-  const html = await heyClient.fetchHtml("/my/imbox")
+  const html = await heyClient.fetchHtml("/imbox")
   const root = parseHtml(html)
 
   // Look for account info in the page - typically in a data attribute or form

@@ -355,7 +355,17 @@ export function cacheSearchResults(searchQuery: string, emails: Email[]): void {
  * Invalidate cache for specific actions.
  */
 export function invalidateForAction(
-  action: "archive" | "delete" | "set_aside" | "reply_later" | "send" | "reply",
+  action:
+    | "archive"
+    | "delete"
+    | "set_aside"
+    | "reply_later"
+    | "send"
+    | "reply"
+    | "trash"
+    | "restore"
+    | "spam"
+    | "bubble_up",
   messageId?: string,
 ): void {
   const now = unixNow()
@@ -385,6 +395,46 @@ export function invalidateForAction(
       // Invalidate sent folder and potentially thread cache
       execute(
         "UPDATE sync_state SET requires_full_sync = 1 WHERE folder IN ('sent', 'imbox')",
+      )
+      break
+
+    case "trash":
+      if (messageId) {
+        execute("UPDATE messages SET cached_at = 0 WHERE id = ?", [messageId])
+      }
+      // Invalidate imbox and trash folders
+      execute(
+        "UPDATE sync_state SET requires_full_sync = 1 WHERE folder IN ('imbox', 'trash', 'feed', 'paper_trail')",
+      )
+      break
+
+    case "restore":
+      if (messageId) {
+        execute("UPDATE messages SET cached_at = 0 WHERE id = ?", [messageId])
+      }
+      // Invalidate trash and destination folders
+      execute(
+        "UPDATE sync_state SET requires_full_sync = 1 WHERE folder IN ('imbox', 'trash', 'spam')",
+      )
+      break
+
+    case "spam":
+      if (messageId) {
+        execute("UPDATE messages SET cached_at = 0 WHERE id = ?", [messageId])
+      }
+      // Invalidate imbox and spam folders
+      execute(
+        "UPDATE sync_state SET requires_full_sync = 1 WHERE folder IN ('imbox', 'spam', 'feed', 'paper_trail')",
+      )
+      break
+
+    case "bubble_up":
+      if (messageId) {
+        execute("UPDATE messages SET cached_at = 0 WHERE id = ?", [messageId])
+      }
+      // Invalidate set_aside folder (bubble up moves from set aside)
+      execute(
+        "UPDATE sync_state SET requires_full_sync = 1 WHERE folder IN ('set_aside', 'imbox')",
       )
       break
   }

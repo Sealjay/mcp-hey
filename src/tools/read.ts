@@ -41,6 +41,12 @@ export interface ListOptions {
   forceRefresh?: boolean
 }
 
+export interface Label {
+  id: string
+  name: string
+  color?: string
+}
+
 export interface SearchOptions {
   limit?: number
   forceRefresh?: boolean
@@ -223,37 +229,106 @@ async function listFolder(
 export async function listImbox(
   options: ListOptions = {},
 ): Promise<CachedResult<Email[]>> {
-  return listFolder("imbox", "/my/imbox", options)
+  return listFolder("imbox", "/imbox", options)
 }
 
 export async function listFeed(
   options: ListOptions = {},
 ): Promise<CachedResult<Email[]>> {
-  return listFolder("feed", "/my/the_feed", options)
+  return listFolder("feed", "/feedbox", options)
 }
 
 export async function listPaperTrail(
   options: ListOptions = {},
 ): Promise<CachedResult<Email[]>> {
-  return listFolder("paper_trail", "/my/paper_trail", options)
+  return listFolder("paper_trail", "/paper_trail", options)
 }
 
 export async function listSetAside(
   options: ListOptions = {},
 ): Promise<CachedResult<Email[]>> {
-  return listFolder("set_aside", "/my/set_aside", options)
+  return listFolder("set_aside", "/set_aside", options)
 }
 
 export async function listReplyLater(
   options: ListOptions = {},
 ): Promise<CachedResult<Email[]>> {
-  return listFolder("reply_later", "/my/reply_later", options)
+  return listFolder("reply_later", "/reply_later", options)
 }
 
 export async function listScreener(
   options: ListOptions = {},
 ): Promise<CachedResult<Email[]>> {
-  return listFolder("screener", "/my/screener", options)
+  return listFolder("screener", "/clearances", options)
+}
+
+export async function listTrash(
+  options: ListOptions = {},
+): Promise<CachedResult<Email[]>> {
+  return listFolder("trash", "/topics/trash", options)
+}
+
+export async function listSpam(
+  options: ListOptions = {},
+): Promise<CachedResult<Email[]>> {
+  return listFolder("spam", "/topics/spam", options)
+}
+
+export async function listDrafts(
+  options: ListOptions = {},
+): Promise<CachedResult<Email[]>> {
+  return listFolder("drafts", "/entries/drafts", options)
+}
+
+function extractLabelsFromHtml(html: string): Label[] {
+  try {
+    const root = parseHtml(html)
+    const labels: Label[] = []
+
+    // Hey.com uses folders for labels
+    const folderItems = root.querySelectorAll(
+      "[data-folder-id], .folder-item, [data-collection-id]",
+    )
+
+    for (const item of folderItems) {
+      const id =
+        item.getAttribute("data-folder-id") ||
+        item.getAttribute("data-collection-id") ||
+        item.getAttribute("id")
+
+      if (!id) continue
+
+      const nameEl = item.querySelector(".folder-name, .name, .label")
+      const name = nameEl?.text?.trim() || item.text?.trim() || "Unnamed"
+
+      const color =
+        item.getAttribute("data-color") ||
+        item.querySelector("[data-color]")?.getAttribute("data-color")
+
+      labels.push({
+        id: id.replace(/^folder-/, ""),
+        name,
+        color: color || undefined,
+      })
+    }
+
+    return labels
+  } catch (err) {
+    console.error("[hey-mcp] Failed to parse labels HTML:", err)
+    return []
+  }
+}
+
+export async function listLabels(): Promise<Label[]> {
+  const html = await heyClient.fetchHtml("/folders")
+  return extractLabelsFromHtml(html)
+}
+
+export async function listLabelEmails(
+  labelId: string,
+  options: ListOptions = {},
+): Promise<CachedResult<Email[]>> {
+  return listFolder(`label_${labelId}`, `/folders/${labelId}`, options)
 }
 
 export async function readEmail(
@@ -314,7 +389,7 @@ export async function searchEmails(
 
   // Fetch from network
   const encodedQuery = encodeURIComponent(query)
-  const html = await heyClient.fetchHtml(`/my/search?q=${encodedQuery}`)
+  const html = await heyClient.fetchHtml(`/search?q=${encodedQuery}`)
   const emails = extractEmailsFromHtml(html).slice(0, limit)
 
   // Update cache
