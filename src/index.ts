@@ -33,6 +33,7 @@ import {
   unignoreThread,
 } from "./tools/organise"
 import {
+  getImboxSummary,
   listDrafts,
   listFeed,
   listImbox,
@@ -146,6 +147,20 @@ const tools: Tool[] = [
           type: "number",
           description: "Page number for pagination (default: 1)",
         },
+        force_refresh: {
+          type: "boolean",
+          description: "Bypass cache and fetch fresh data (default: false)",
+        },
+      },
+    },
+  },
+  {
+    name: "hey_imbox_summary",
+    description:
+      "Get a complete Imbox summary including screener count, bubbled up emails, and new emails. Use this for a comprehensive view of the inbox state.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
         force_refresh: {
           type: "boolean",
           description: "Bypass cache and fetch fresh data (default: false)",
@@ -676,6 +691,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const page = clampNumber(args?.page, 1, 1, 1000)
         const forceRefresh = (args?.force_refresh as boolean) ?? false
         result = await listImbox({ limit, page, forceRefresh })
+        break
+      }
+      case "hey_imbox_summary": {
+        const forceRefresh = (args?.force_refresh as boolean) ?? false
+        result = await getImboxSummary({ forceRefresh })
         break
       }
       case "hey_list_feed": {

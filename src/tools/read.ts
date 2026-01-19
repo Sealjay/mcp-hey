@@ -21,6 +21,16 @@ export interface Email {
   snippet?: string
   date?: string
   unread?: boolean
+  bubbledUp?: boolean
+  label?: string
+}
+
+export interface ImboxSummary {
+  screenerCount: number
+  bubbledUpCount: number
+  newCount: number
+  emails: Email[]
+  bubbledUpEmails: Email[]
 }
 
 export interface EmailDetail {
@@ -57,63 +67,80 @@ function extractEmailsFromHtml(html: string): Email[] {
     const root = parseHtml(html)
     const emails: Email[] = []
 
-    // Hey.com uses Turbo frames, look for email entries
-    // The structure varies but typically includes data-entry-id or similar attributes
-    const entries = root.querySelectorAll(
-      "[data-entry-id], .posting, [data-posting-id]",
-    )
+    // Hey.com email entries are article.posting elements
+    const entries = root.querySelectorAll("article.posting")
 
     for (const entry of entries) {
-      const id =
-        entry.getAttribute("data-entry-id") ||
-        entry.getAttribute("data-posting-id") ||
-        entry.getAttribute("id")
-
+      // ID is in data-identifier attribute
+      const id = entry.getAttribute("data-identifier")
       if (!id) continue
 
-      // Extract sender info
-      const senderEl = entry.querySelector(".sender, .from, [data-sender]")
-      const from = senderEl?.text?.trim() || "Unknown"
-
-      // Extract subject
-      const subjectEl = entry.querySelector(".subject, .topic-subject, h3, h4")
+      // Subject is in .posting__title
+      const subjectEl = entry.querySelector(".posting__title")
       const subject = subjectEl?.text?.trim() || "(No subject)"
 
-      // Extract snippet/preview
-      const snippetEl = entry.querySelector(
-        ".snippet, .preview, .excerpt, .body-preview",
-      )
+      // Sender name is in .posting__detail or from avatar alt attribute
+      const senderEl = entry.querySelector(".posting__detail")
+      const avatarEl = entry.querySelector(".avatar")
+      const from =
+        senderEl?.text?.trim() || avatarEl?.getAttribute("alt") || "Unknown"
+
+      // Snippet/preview is in .posting__summary
+      const snippetEl = entry.querySelector(".posting__summary")
       const snippet = snippetEl?.text?.trim()
 
-      // Extract date
-      const dateEl = entry.querySelector("time, .date, .timestamp")
-      const date = dateEl?.getAttribute("datetime") || dateEl?.text?.trim()
+      // Date is in .posting__time or time element
+      const timeEl = entry.querySelector(".posting__time, time")
+      const date = timeEl?.getAttribute("datetime") || timeEl?.text?.trim()
 
-      // Check if unread
-      const unread =
-        entry.classList?.contains("unread") ||
-        entry.getAttribute("data-unread") === "true"
+      // Unread status from class
+      const classAttr = entry.getAttribute("class") || ""
+      const unread = classAttr.includes("posting--unread")
+
+      // Bubbled up status from data attribute
+      const bubbledUp = entry.getAttribute("data-bubbled-up") === "true"
+
+      // Label from inbox pill
+      const labelEl = entry.querySelector(".posting__inbox-pill, .inbox-pill")
+      const label = labelEl?.text?.trim()
 
       emails.push({
-        id: id.replace(/^entry-/, ""),
+        id,
         from,
         subject,
         snippet,
         date,
         unread,
+        bubbledUp,
+        label,
       })
     }
 
-    // Fallback: try parsing Turbo stream content
+    // Fallback for screener page: look for clearance articles
     if (emails.length === 0) {
-      const turboFrames = root.querySelectorAll("turbo-frame")
-      for (const frame of turboFrames) {
-        const frameId = frame.getAttribute("id")
-        if (frameId?.startsWith("entry_") || frameId?.startsWith("posting_")) {
-          const innerHtml = frame.innerHTML
-          const innerEmails = extractEmailsFromHtml(innerHtml)
-          emails.push(...innerEmails)
-        }
+      const clearanceEntries = root.querySelectorAll("article")
+      for (const entry of clearanceEntries) {
+        // Screener entries have sender email in heading
+        const headingEl = entry.querySelector("h4, h3, heading")
+        const subjectEl = entry.querySelector(
+          '[class*="subject"], [class*="topic"]',
+        )
+
+        // Look for hidden input with posting ID
+        const idInput = entry.querySelector('input[type="hidden"][value]')
+        const id = idInput?.getAttribute("value")
+
+        if (!id) continue
+
+        const from = headingEl?.text?.trim()?.split("<")[0]?.trim() || "Unknown"
+        const subject = subjectEl?.text?.trim() || "(No subject)"
+
+        emails.push({
+          id,
+          from,
+          subject,
+          unread: true,
+        })
       }
     }
 
@@ -124,47 +151,255 @@ function extractEmailsFromHtml(html: string): Email[] {
   }
 }
 
-function extractEmailDetail(html: string, id: string): EmailDetail {
+function extractImboxSummary(html: string): ImboxSummary {
   const root = parseHtml(html)
+  const emails = extractEmailsFromHtml(html)
 
-  // Extract sender
-  const senderEl = root.querySelector(
-    ".sender, .from, [data-sender], .message-sender",
-  )
-  const from = senderEl?.text?.trim() || "Unknown"
+  // Extract screener count from button text like "Screen 1 first-time sender"
+  let screenerCount = 0
+  const screenerButton = root.querySelector('[href="/clearances"]')
+  if (screenerButton) {
+    const text = screenerButton.text || ""
+    const match = text.match(/Screen\s+(\d+)/i)
+    if (match) {
+      screenerCount = Number.parseInt(match[1], 10)
+    }
+  }
 
-  // Extract email address from sender element or data attribute
-  const fromEmail =
-    senderEl?.getAttribute("data-email") ||
-    root.querySelector("[data-sender-email]")?.getAttribute("data-sender-email")
+  // Also check status element for screener count
+  if (screenerCount === 0) {
+    const statusEl = root.querySelector("status, [role='status']")
+    if (statusEl) {
+      const text = statusEl.text || ""
+      const match = text.match(/(\d+)\s+message/i)
+      if (match) {
+        screenerCount = Number.parseInt(match[1], 10)
+      }
+    }
+  }
+
+  // Separate bubbled up emails from regular emails
+  const bubbledUpEmails = emails.filter((e) => e.bubbledUp)
+  const newEmails = emails.filter((e) => e.unread && !e.bubbledUp)
+
+  return {
+    screenerCount,
+    bubbledUpCount: bubbledUpEmails.length,
+    newCount: newEmails.length,
+    emails,
+    bubbledUpEmails,
+  }
+}
+
+/**
+ * Parse raw email text format (MIME) to extract body and headers.
+ * This handles the /messages/{id}.text endpoint response.
+ */
+function parseRawEmailText(rawText: string): {
+  from: string
+  fromEmail?: string
+  subject: string
+  body: string
+  date?: string
+  to?: string[]
+} {
+  const lines = rawText.split("\n")
+  const headers: Record<string, string> = {}
+  let headerEnd = 0
+
+  // Parse headers until empty line
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.trim() === "") {
+      headerEnd = i
+      break
+    }
+    // Handle header continuation (lines starting with whitespace)
+    if (line.startsWith(" ") || line.startsWith("\t")) {
+      const lastKey = Object.keys(headers).pop()
+      if (lastKey) {
+        headers[lastKey] += ` ${line.trim()}`
+      }
+    } else {
+      const colonIdx = line.indexOf(":")
+      if (colonIdx > 0) {
+        const key = line.slice(0, colonIdx).toLowerCase()
+        const value = line.slice(colonIdx + 1).trim()
+        headers[key] = value
+      }
+    }
+  }
+
+  // Extract from header
+  const fromHeader = headers.from || ""
+  const fromMatch = fromHeader.match(/^([^<]+)?<?([^>]+@[^>]+)?>?$/)
+  const from = fromMatch?.[1]?.trim()?.replace(/^"|"$/g, "") || "Unknown"
+  const fromEmail = fromMatch?.[2]
 
   // Extract subject
+  const subject = headers.subject || "(No subject)"
+
+  // Extract date
+  const date = headers.date
+
+  // Extract to
+  const toHeader = headers.to || ""
+  const to = toHeader
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean)
+
+  // Extract body - find plain text part in MIME message
+  let body = ""
+  const bodyContent = lines.slice(headerEnd + 1).join("\n")
+
+  // Check for MIME boundary
+  const boundaryMatch = headers["content-type"]?.match(
+    /boundary="?([^";\s]+)"?/,
+  )
+  if (boundaryMatch) {
+    const boundary = boundaryMatch[1]
+    const parts = bodyContent.split(`--${boundary}`)
+
+    // Find plain text part
+    for (const part of parts) {
+      if (
+        part.includes("Content-Type: text/plain") ||
+        part.includes("content-type: text/plain")
+      ) {
+        // Skip headers of this part
+        const partLines = part.split("\n")
+        let partHeaderEnd = 0
+        for (let i = 0; i < partLines.length; i++) {
+          if (partLines[i].trim() === "") {
+            partHeaderEnd = i
+            break
+          }
+        }
+        body = partLines
+          .slice(partHeaderEnd + 1)
+          .join("\n")
+          .trim()
+        // Stop at next boundary marker
+        const boundaryIdx = body.indexOf(`--${boundary}`)
+        if (boundaryIdx > 0) {
+          body = body.slice(0, boundaryIdx).trim()
+        }
+        break
+      }
+    }
+  }
+
+  // If no MIME parts, use raw body
+  if (!body) {
+    body = bodyContent.trim()
+  }
+
+  return {
+    from,
+    fromEmail,
+    subject,
+    body,
+    date,
+    to: to.length > 0 ? to : undefined,
+  }
+}
+
+function extractEmailDetail(
+  content: string,
+  id: string,
+  isRawText = false,
+): EmailDetail {
+  // Handle raw email text format (from .text endpoint)
+  if (
+    isRawText ||
+    content.startsWith("Return-Path:") ||
+    content.startsWith("Received:")
+  ) {
+    const parsed = parseRawEmailText(content)
+    return {
+      id,
+      from: parsed.from,
+      fromEmail: parsed.fromEmail,
+      subject: parsed.subject,
+      body: parsed.body,
+      date: parsed.date,
+      to: parsed.to,
+    }
+  }
+
+  // Parse HTML format
+  const root = parseHtml(content)
+
+  // Extract subject from topic title or page heading
   const subjectEl = root.querySelector(
-    ".subject, h1.subject, .message-subject, [data-subject]",
+    ".topic__title, h1, .entry__collection-topic, [class*='subject']",
   )
   const subject = subjectEl?.text?.trim() || "(No subject)"
 
-  // Extract body - look for message content
-  const bodyEl = root.querySelector(
-    ".message-body, .body, .content, .trix-content, [data-message-body]",
-  )
-  const body = bodyEl?.innerHTML || bodyEl?.text || ""
+  // Extract sender from entry header - look for link with sender name
+  // The avatar alt attribute contains "Name <email>" format
+  const avatarEl = root.querySelector(".entry__avatar .avatar, .avatar")
+  const avatarAlt = avatarEl?.getAttribute("alt") || ""
 
-  // Extract date
-  const dateEl = root.querySelector("time, .date, .timestamp, [datetime]")
+  // Parse "Name <email>" format from avatar alt
+  const emailMatch = avatarAlt.match(/<([^>]+)>/)
+  const fromEmail = emailMatch?.[1]
+  const from = avatarAlt.split("<")[0]?.trim() || "Unknown"
+
+  // Extract body content
+  // Hey uses <message-content> with shadow DOM, but the template/turbo-frame
+  // contains the actual HTML content when fetched server-side
+  let body = ""
+
+  // Try multiple selectors for body content
+  const bodySelectors = [
+    "message-content template",
+    "message-content",
+    ".entry__body .entry__content",
+    ".entry__content",
+    ".trix-content",
+    ".message-body",
+  ]
+
+  for (const selector of bodySelectors) {
+    const bodyEl = root.querySelector(selector)
+    if (bodyEl) {
+      const extractedContent = bodyEl.innerHTML || bodyEl.text || ""
+      if (extractedContent.trim().length > body.length) {
+        body = extractedContent.trim()
+      }
+    }
+  }
+
+  // If still no body, try to get excerpt/snippet as fallback
+  if (!body) {
+    const excerptEl = root.querySelector(".entry__excerpt, .posting__summary")
+    body = excerptEl?.text?.trim() || ""
+  }
+
+  // Extract date from entry time
+  const dateEl = root.querySelector(
+    ".entry__time time, .entry__time, time[datetime]",
+  )
   const date = dateEl?.getAttribute("datetime") || dateEl?.text?.trim()
 
-  // Extract recipients
-  const toEls = root.querySelectorAll(".to-recipient, [data-recipient]")
+  // Extract recipients from entry header
+  const toEls = root.querySelectorAll(
+    ".entry__recipients a, [class*='recipient'] a",
+  )
   const to = toEls.map((el: HTMLElement) => el.text.trim()).filter(Boolean)
 
-  const ccEls = root.querySelectorAll(".cc-recipient, [data-cc]")
+  const ccEls = root.querySelectorAll("[class*='cc'] a")
   const cc = ccEls.map((el: HTMLElement) => el.text.trim()).filter(Boolean)
 
-  // Extract thread ID if present
+  // Extract thread/topic ID from URL or data attributes
   const threadId =
-    root.querySelector("[data-thread-id]")?.getAttribute("data-thread-id") ||
-    root.querySelector("[data-topic-id]")?.getAttribute("data-topic-id")
+    root.querySelector("[data-topic-id]")?.getAttribute("data-topic-id") ||
+    root
+      .querySelector("a[href*='/topics/']")
+      ?.getAttribute("href")
+      ?.match(/\/topics\/(\d+)/)?.[1]
 
   return {
     id,
@@ -230,6 +465,25 @@ export async function listImbox(
   options: ListOptions = {},
 ): Promise<CachedResult<Email[]>> {
   return listFolder("imbox", "/imbox", options)
+}
+
+/**
+ * Get full imbox summary including screener count and bubbled up emails.
+ * This provides more context than listImbox alone.
+ */
+export async function getImboxSummary(
+  options: ListOptions = {},
+): Promise<CachedResult<ImboxSummary>> {
+  const { forceRefresh = false } = options
+
+  // Fetch from network (always fresh for summary)
+  const html = await heyClient.fetchHtml("/imbox")
+  const summary = extractImboxSummary(html)
+
+  return {
+    data: summary,
+    _cache: createNetworkMetadata(),
+  }
 }
 
 export async function listFeed(
@@ -349,8 +603,9 @@ export async function readEmail(
 
   // Fetch from network
   const path = format === "text" ? `/messages/${id}.text` : `/messages/${id}`
-  const html = await heyClient.fetchHtml(path)
-  const email = extractEmailDetail(html, id)
+  const content = await heyClient.fetchHtml(path)
+  const isRawText = format === "text"
+  const email = extractEmailDetail(content, id, isRawText)
 
   // Update cache
   cacheEmailDetail(email)
