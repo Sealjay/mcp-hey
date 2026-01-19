@@ -78,8 +78,13 @@ function extractEmailsFromHtml(html: string): Email[] {
     const root = parseHtml(html)
     const emails: Email[] = []
 
-    // Hey.com email entries are article.posting elements
-    const entries = root.querySelectorAll("article.posting")
+    // Hey.com email entries can be:
+    // - article.posting (standard list views like imbox, set_aside)
+    // - article.bulk-actions__container[data-identifier] (Focus & Reply view for reply_later)
+    // We use data-identifier as the reliable indicator of an email entry
+    const entries = root.querySelectorAll(
+      "article.posting, article.bulk-actions__container[data-identifier]",
+    )
 
     for (const entry of entries) {
       // Extract multiple ID types from different sources
@@ -134,15 +139,25 @@ function extractEmailsFromHtml(html: string): Email[] {
       const id = topicId || entryId || postingId
       if (!id) continue
 
-      // Subject is in .posting__title
-      const subjectEl = entry.querySelector(".posting__title")
+      // Subject is in .posting__title, or heading elements for Focus & Reply view
+      const subjectEl =
+        entry.querySelector(".posting__title") ||
+        entry.querySelector(".topic__title") ||
+        entry.querySelector("h1, h2, h3")
       const subject = subjectEl?.text?.trim() || "(No subject)"
 
-      // Sender name is in .posting__detail or from avatar alt attribute
+      // Sender name is in .posting__detail, or from avatar/image alt attribute
       const senderEl = entry.querySelector(".posting__detail")
-      const avatarEl = entry.querySelector(".avatar")
-      const from =
-        senderEl?.text?.trim() || avatarEl?.getAttribute("alt") || "Unknown"
+      const avatarEl =
+        entry.querySelector(".avatar") || entry.querySelector("img[alt*='@']")
+      // Parse sender from avatar alt which may be "Name <email>" format
+      const avatarAlt = avatarEl?.getAttribute("alt") || ""
+      const senderFromAvatar = avatarAlt.split("<")[0]?.trim() || avatarAlt
+      const from = senderEl?.text?.trim() || senderFromAvatar || "Unknown"
+
+      // Extract sender email from avatar alt if present
+      const emailMatch = avatarAlt.match(/<([^>]+@[^>]+)>/)
+      const fromEmail = emailMatch?.[1]
 
       // Snippet/preview is in .posting__summary
       const snippetEl = entry.querySelector(".posting__summary")
@@ -169,6 +184,7 @@ function extractEmailsFromHtml(html: string): Email[] {
         entryId,
         postingId,
         from,
+        fromEmail,
         subject,
         snippet,
         date,
@@ -735,31 +751,21 @@ function extractLabelsFromHtml(html: string): Label[] {
     const root = parseHtml(html)
     const labels: Label[] = []
 
-    // Hey.com uses folders for labels
-    const folderItems = root.querySelectorAll(
-      "[data-folder-id], .folder-item, [data-collection-id]",
-    )
+    // Hey.com labels page has links to /folders/{id}
+    const links = root.querySelectorAll("a[href*='/folders/']")
 
-    for (const item of folderItems) {
-      const id =
-        item.getAttribute("data-folder-id") ||
-        item.getAttribute("data-collection-id") ||
-        item.getAttribute("id")
+    for (const link of links) {
+      const href = link.getAttribute("href")
+      const match = href?.match(/\/folders\/(\d+)/)
+      if (!match) continue
 
-      if (!id) continue
+      const id = match[1]
+      const name = link.text?.trim() || "Unnamed"
 
-      const nameEl = item.querySelector(".folder-name, .name, .label")
-      const name = nameEl?.text?.trim() || item.text?.trim() || "Unnamed"
+      // Skip "New label" link and navigation links
+      if (name === "New label" || name === "All Labels") continue
 
-      const color =
-        item.getAttribute("data-color") ||
-        item.querySelector("[data-color]")?.getAttribute("data-color")
-
-      labels.push({
-        id: id.replace(/^folder-/, ""),
-        name,
-        color: color || undefined,
-      })
+      labels.push({ id, name })
     }
 
     return labels

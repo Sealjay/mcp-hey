@@ -684,14 +684,51 @@ Hey.com uses Hotwire/Turbo for dynamic updates. Email lists are typically contai
 
 ### Email Entry Structure
 
+Standard list views (Imbox, Feed, Paper Trail, Set Aside) use `article.posting`:
+
 ```html
-<div data-entry-id="12345" class="posting">
-  <div class="sender">John Doe</div>
-  <div class="subject">Hello World</div>
-  <div class="snippet">Preview of email content...</div>
-  <time datetime="2024-01-15T10:30:00Z">Jan 15</time>
-</div>
+<article class="bulk-actions__container posting" data-identifier="12345" id="posting_12345">
+  <div class="posting__body">
+    <img class="avatar" alt="John Doe <john@example.com>">
+    <a href="/topics/67890" class="posting__link">
+      <span class="posting__title">Hello World</span>
+      <span class="posting__detail">John Doe</span>
+      <span class="posting__summary">Preview of email content...</span>
+    </a>
+    <time class="posting__time" datetime="2024-01-15T10:30:00Z">Jan 15</time>
+  </div>
+</article>
 ```
+
+### View-Specific Differences
+
+| View | CSS Classes | Notes |
+|------|-------------|-------|
+| `/imbox`, `/feedbox`, `/paper_trail` | `article.posting` | Standard list view |
+| `/set_aside` | `article.bulk-actions__container.posting` | Has both classes |
+| `/reply_later` | `article.bulk-actions__container` | "Focus & Reply" view - **missing** `.posting` class |
+| Imbox parking tray | `presentation` elements | Shows Reply Later + Set Aside at bottom of imbox |
+
+### Parsing Emails
+
+To reliably extract emails from all views, use this selector:
+
+```javascript
+article.posting, article.bulk-actions__container[data-identifier]
+```
+
+Key data attributes:
+- `data-identifier` - Posting ID (most reliable ID)
+- `data-list-name` - View type (`asidebox`, `laterbox`, etc.)
+- `data-box-kind` - Box type identifier
+
+### ID Types
+
+| ID Type | Source | Used For |
+|---------|--------|----------|
+| `postingId` | `data-identifier` attribute | `/postings/{id}/*` operations |
+| `topicId` | Link href `/topics/{id}` | `/topics/{id}/*` operations (trash, labels, etc.) |
+| `entryId` | URL fragment `#__entry_{id}` | `/entries/{id}/*` operations (set_aside, reply_later) |
 
 ---
 
@@ -716,3 +753,5 @@ When a session expires, requests return a 302 redirect to `/sign_in`. The hey-mc
 | 2025-12 | Cookie name changed from `_hey_session` to `session_token` |
 | 2025-01 | Documented correct bubble up endpoint as `/postings/bubble_up?posting_ids[]={id}` |
 | 2025-01 | Documented compose page URL as `/messages/new` |
+| 2026-01 | Documented Reply Later "Focus & Reply" view uses different CSS class (`bulk-actions__container` only, no `posting` class) |
+| 2026-01 | Added view-specific HTML differences table and parsing guidance |
