@@ -7,6 +7,8 @@ Opens a system webview for Hey.com login and captures session cookies.
 import json
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 try:
@@ -37,13 +39,18 @@ class HeyAuth:
         print(f"Page loaded: {url}", file=sys.stderr)
 
         # Skip auth pages - wait until we reach the actual app
-        skip_pages = ["/sign_in", "/two_factor_authentication", "/session", "/verify"]
+        skip_pages = ["/sign_in", "/two_factor_authentication", "/session", "/verify", "/password"]
         if any(page in url for page in skip_pages):
             print("Waiting for authentication to complete...", file=sys.stderr)
             return
 
         # Check if we've navigated to an authenticated page (imbox, feed, etc.)
-        if "app.hey.com" in url:
+        authenticated_pages = ["/imbox", "/feedbox", "/paper_trail", "/set_aside", "/reply_later", "/clearances"]
+        is_authenticated_page = any(page in url for page in authenticated_pages) or (
+            "app.hey.com" in url and not any(page in url for page in skip_pages)
+        )
+
+        if is_authenticated_page:
             print("Authenticated page detected, extracting cookies...", file=sys.stderr)
 
             # Try JavaScript first (works for non-HttpOnly cookies)
@@ -195,6 +202,31 @@ class HeyAuth:
 
         print(f"Saved {len(cookies)} cookies to {self.cookies_path}", file=sys.stderr)
 
+    def _poll_for_auth(self):
+        """Poll for authentication completion as fallback."""
+        while not self.authenticated and self.window is not None:
+            time.sleep(1)
+            try:
+                if self.window is None:
+                    break
+                url = self.window.get_current_url()
+                if url:
+                    # Check if we're on an authenticated page
+                    skip_pages = ["/sign_in", "/two_factor_authentication", "/session", "/verify", "/password"]
+                    authenticated_pages = ["/imbox", "/feedbox", "/paper_trail", "/set_aside"]
+
+                    if any(page in url for page in authenticated_pages):
+                        print(f"Polling detected authenticated page: {url}", file=sys.stderr)
+                        self.on_loaded()
+                        break
+                    elif "app.hey.com" in url and not any(page in url for page in skip_pages):
+                        print(f"Polling detected app page: {url}", file=sys.stderr)
+                        self.on_loaded()
+                        break
+            except Exception as e:
+                print(f"Polling error: {e}", file=sys.stderr)
+                break
+
     def run(self):
         """Start the authentication flow."""
         self.window = webview.create_window(
@@ -204,6 +236,10 @@ class HeyAuth:
             height=700,
         )
         self.window.events.loaded += self.on_loaded
+
+        # Start a background thread to poll for auth as fallback
+        poll_thread = threading.Thread(target=self._poll_for_auth, daemon=True)
+        poll_thread.start()
 
         # Start webview with private_mode=False to use persistent cookie storage
         # This allows us to access cookies via NSHTTPCookieStorage

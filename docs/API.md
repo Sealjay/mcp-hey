@@ -2,24 +2,61 @@
 
 This document describes the reverse-engineered Hey.com web API endpoints used by hey-mcp.
 
-## Base URL
+> **Warning**: This API is reverse-engineered and may change without notice. Keep this documentation current as you discover changes.
+
+## Table of Contents
+
+- [Base Configuration](#base-configuration)
+- [Authentication](#authentication)
+- [Required Headers](#required-headers)
+- [CSRF Protection](#csrf-protection)
+- [Rate Limiting](#rate-limiting)
+- [Endpoints](#endpoints)
+  - [Reading Emails](#reading-emails)
+  - [Inbox Views](#inbox-views)
+  - [Search](#search)
+  - [Sending Emails](#sending-emails)
+  - [Organisation](#organisation)
+  - [Thread Status](#thread-status)
+  - [Labels](#labels)
+  - [Collections](#collections)
+- [HTML Response Structure](#html-response-structure)
+- [Session Management](#session-management)
+- [Known Issues](#known-issues)
+- [Changelog](#changelog)
+
+---
+
+## Base Configuration
 
 ```
-https://app.hey.com
+Base URL: https://app.hey.com
+Compose Page: /messages/new
 ```
+
+---
 
 ## Authentication
 
-Hey.com uses session-based authentication with cookies. The primary authentication cookies are:
+Hey.com uses session-based authentication with cookies:
 
-- `_hey_session` - Main session cookie
-- `remember_user_token` - Long-lived authentication token (optional)
+| Cookie | Purpose |
+|--------|---------|
+| `session_token` | Main session cookie (Rails signed cookie) |
+| `device_token` | Device identification token (Rails signed cookie) |
+| `x_user_agent` | User agent string |
+| `time_zone` | User's timezone |
+| `color_scheme` | UI theme preference |
+
+> **Note**: Cookie names changed from `_hey_session` to `session_token` as of late 2025. The auth helper extracts all Hey.com cookies automatically.
+
+---
 
 ## Required Headers
 
 All requests must include browser-realistic headers to avoid detection:
 
-```
+```http
 Host: app.hey.com
 sec-ch-ua: "Chromium";v="125", "Google Chrome";v="125"
 sec-ch-ua-mobile: ?0
@@ -35,64 +72,168 @@ Accept-Language: en-GB,en;q=0.9
 Cookie: [session cookies]
 ```
 
+---
+
 ## CSRF Protection
 
-Write operations (POST, PUT, DELETE) require a CSRF token. The token is included in the HTML response as a meta tag:
+Write operations (POST, PUT, DELETE) require a CSRF token from the HTML meta tag:
 
 ```html
 <meta name="csrf-token" content="[token]">
 ```
 
-Include this token in requests as:
-- Header: `X-CSRF-Token: [token]`
+Include in requests as header: `X-CSRF-Token: [token]`
+
+---
 
 ## Rate Limiting
 
-Hey.com implements rate limiting. Headers in responses include:
+Response headers indicate rate limit status:
 
-- `x-ratelimit-limit` - Maximum requests allowed
-- `x-ratelimit-remaining` - Requests remaining in current window
-- `x-ratelimit-reset` - Unix timestamp when limit resets
+| Header | Description |
+|--------|-------------|
+| `x-ratelimit-limit` | Maximum requests allowed |
+| `x-ratelimit-remaining` | Requests remaining in current window |
+| `x-ratelimit-reset` | Unix timestamp when limit resets |
 
-Best practices:
+**Best practices:**
 - Add delays when `remaining < 50`
 - Wait until `reset` timestamp when `remaining = 0`
 
+---
+
+## Hey.com View Model
+
+Hey.com organizes email differently from traditional email clients. Instead of folders or archives, it uses a triage-based system:
+
+### Primary Views
+
+| View | Endpoint | Purpose |
+|------|----------|---------|
+| **Imbox** | `/imbox` | Important emails from approved senders |
+| **The Feed** | `/feedbox` | Newsletters, marketing, and notifications |
+| **Paper Trail** | `/paper_trail` | Receipts, confirmations, and transactional emails |
+
+### Working Stacks
+
+| Stack | Endpoint | Purpose |
+|-------|----------|---------|
+| **Set Aside** | `/set_aside` | Temporary holding area for emails to revisit |
+| **Reply Later** | `/reply_later` | Emails that need a response |
+
+### Access Control
+
+| View | Endpoint | Purpose |
+|------|----------|---------|
+| **Screener** | `/clearances` | New senders waiting for approval |
+| **Trash** | `/topics/trash` | Deleted emails |
+| **Spam** | `/topics/spam` | Spam-marked emails |
+| **Drafts** | `/entries/drafts` | Unsent email drafts |
+
+### Key Concepts
+
+1. **No Archive**: Hey.com doesn't have a traditional archive. Once processed, emails remain in their primary view (Imbox/Feed/Paper Trail) until deleted.
+
+2. **Screener First**: New senders must be approved via the Screener before their emails appear in primary views.
+
+3. **View Assignment**: When screening in a sender, you choose which view their emails go to (Imbox, Feed, or Paper Trail).
+
+4. **Bubble Up**: Emails in Set Aside can be scheduled to "bubble up" (reappear in Imbox) at a future time.
+
+---
+
 ## Endpoints
 
-### Reading Endpoints
+### Reading Emails
+
+#### GET /postings/{id}
+
+Get a single email posting/entry (primary endpoint for viewing individual emails).
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Posting ID |
+
+**Response:** HTML page with email content
+
+---
+
+#### GET /topics/{id}
+
+Get an email thread (conversation).
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Topic/Thread ID |
+
+**Response:** HTML page with email thread content
+
+---
+
+#### GET /messages/{id}
+
+Get a single email message.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Message ID |
+
+**Response:** HTML page with email content
+
+---
+
+#### GET /messages/{id}.text
+
+Get a single email message in RFC822 text format.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Message ID |
+
+**Response:** Plain text email content
+
+---
+
+### Inbox Views
 
 #### GET /imbox
+
 List emails in the Imbox (important emails).
 
-**Query Parameters:**
-- `page` (optional): Page number for pagination
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `page` | number | query | Page number (optional) |
 
 **Response:** HTML page with email list
 
 ---
 
 #### GET /feedbox
+
 List emails in The Feed (newsletters, notifications).
 
-**Query Parameters:**
-- `page` (optional): Page number for pagination
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `page` | number | query | Page number (optional) |
 
 **Response:** HTML page with email list
 
 ---
 
 #### GET /paper_trail
+
 List emails in Paper Trail (receipts, confirmations).
 
-**Query Parameters:**
-- `page` (optional): Page number for pagination
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `page` | number | query | Page number (optional) |
 
 **Response:** HTML page with email list
 
 ---
 
 #### GET /set_aside
+
 List emails in the Set Aside stack.
 
 **Response:** HTML page with email list
@@ -100,6 +241,7 @@ List emails in the Set Aside stack.
 ---
 
 #### GET /reply_later
+
 List emails in the Reply Later stack.
 
 **Response:** HTML page with email list
@@ -107,53 +249,15 @@ List emails in the Reply Later stack.
 ---
 
 #### GET /clearances
+
 List emails waiting in the Screener.
 
 **Response:** HTML page with screener entries
 
 ---
 
-#### GET /topics/{id}
-Get a single email thread (HTML format).
-
-**Path Parameters:**
-- `id`: Topic/Thread ID
-
-**Response:** HTML page with email thread content
-
----
-
-#### GET /messages/{id}
-Get a single email message (HTML format).
-
-**Path Parameters:**
-- `id`: Message ID
-
-**Response:** HTML page with email content
-
----
-
-#### GET /messages/{id}.text
-Get a single email message (RFC822 text format).
-
-**Path Parameters:**
-- `id`: Message ID
-
-**Response:** Plain text email content
-
----
-
-#### GET /search
-Search emails.
-
-**Query Parameters:**
-- `q`: Search query string
-
-**Response:** HTML page with search results
-
----
-
 #### GET /topics/trash
+
 List trashed emails.
 
 **Response:** HTML page with trashed emails
@@ -161,6 +265,7 @@ List trashed emails.
 ---
 
 #### GET /topics/spam
+
 List spam emails.
 
 **Response:** HTML page with spam emails
@@ -168,257 +273,402 @@ List spam emails.
 ---
 
 #### GET /entries/drafts
+
 List draft emails.
 
 **Response:** HTML page with drafts
 
 ---
 
-### Labels/Folders Endpoints
+### Search
 
-#### GET /folders
-List all labels.
+#### GET /search
 
-**Response:** HTML page with all labels and their folder IDs
+Quick search endpoint (used for autocomplete). Returns basic search results.
 
----
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `q` | string | query | Search query string |
 
-#### GET /folders/{id}
-View emails with a specific label.
-
-**Path Parameters:**
-- `id`: Folder/Label ID
-
-**Response:** HTML page with labelled emails
+**Response:** HTML page with search results
 
 ---
 
-#### GET /my/navigation
-Get the navigation menu (includes all folders/labels).
+#### GET /advanced_search
 
-**Response:** HTML fragment with navigation structure
+Full search page with filtering options (From, To, Subject, Date range, Label).
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `q` | string | query | Search query string |
+
+**Response:** HTML page with:
+- **Contacts** section: Matching email addresses
+- **Messages** section: Matching email threads
+
+> **Note**: Both `/search` and `/advanced_search` work. The MCP uses `/search` for simplicity; the web UI uses `/advanced_search` for the full results page.
 
 ---
 
-### Sending Endpoints
+### Sending Emails
 
 #### POST /entries
+
 Send a new email.
 
 **Content-Type:** `application/x-www-form-urlencoded`
 
-**Form Fields:**
-- `acting_sender_id`: Your Hey account ID
-- `acting_sender_email`: Your Hey email address
-- `entry[addressed][directly][]`: Recipient email (repeat for multiple)
-- `entry[addressed][copied][]`: CC recipient email (repeat for multiple)
-- `message[subject]`: Email subject
-- `message[content]`: Email body (HTML supported)
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `acting_sender_id` | string | Yes | Your Hey account ID |
+| `acting_sender_email` | string | Yes | Your Hey email address |
+| `entry[addressed][directly][]` | string | Yes | Recipient email (repeat for multiple) |
+| `entry[addressed][copied][]` | string | No | CC recipient email (repeat for multiple) |
+| `message[subject]` | string | Yes | Email subject |
+| `message[content]` | string | Yes | Email body (HTML supported) |
 
 **Response:** Redirect to the new message
 
 ---
 
 #### POST /topics/{id}/messages
+
 Reply to an email thread.
 
-**Path Parameters:**
-- `id`: Topic/thread ID
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Topic/thread ID |
 
 **Content-Type:** `application/x-www-form-urlencoded`
 
-**Form Fields:**
-- `acting_sender_id`: Your Hey account ID
-- `acting_sender_email`: Your Hey email address
-- `message[content]`: Reply body (HTML supported)
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `acting_sender_id` | string | Yes | Your Hey account ID |
+| `acting_sender_email` | string | Yes | Your Hey email address |
+| `message[content]` | string | Yes | Reply body (HTML supported) |
 
 **Response:** Redirect to the thread
 
 ---
 
-### Organisation Endpoints
+### Organisation
 
 #### PUT /entries/{id}/set_aside
+
 Move an email to Set Aside.
 
-**Path Parameters:**
-- `id`: Entry ID
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Entry ID |
 
 **Response:** 200 OK or redirect
 
 ---
 
 #### DELETE /entries/{id}/set_aside
+
 Remove an email from Set Aside.
 
-**Path Parameters:**
-- `id`: Entry ID
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Entry ID |
 
 **Response:** 200 OK or redirect
 
 ---
 
 #### PUT /entries/{id}/reply_later
+
 Move an email to Reply Later.
 
-**Path Parameters:**
-- `id`: Entry ID
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Entry ID |
 
 **Response:** 200 OK or redirect
 
 ---
 
 #### DELETE /entries/{id}/reply_later
+
 Remove an email from Reply Later.
 
-**Path Parameters:**
-- `id`: Entry ID
-
-**Response:** 200 OK or redirect
-
----
-
-#### POST /clearances/{id}
-Screen in a sender (approve). The clearance ID is found from the screener page.
-
-**Path Parameters:**
-- `id`: Clearance ID
-
-**Response:** 200 OK or redirect
-
----
-
-#### POST /screener/approvals
-Approve a sender (screen in) by email address.
-
-**Content-Type:** `application/x-www-form-urlencoded`
-
-**Form Fields:**
-- `sender_email`: Email address to approve
-
-**Response:** 200 OK or redirect
-
----
-
-#### POST /screener/rejections
-Reject a sender (screen out).
-
-**Content-Type:** `application/x-www-form-urlencoded`
-
-**Form Fields:**
-- `sender_email`: Email address to reject
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Entry ID |
 
 **Response:** 200 OK or redirect
 
 ---
 
 #### PUT /entries/{id}/read
+
 Mark an email as read.
 
-**Path Parameters:**
-- `id`: Entry ID
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Entry ID |
 
 **Response:** 200 OK or redirect
 
 ---
 
 #### DELETE /entries/{id}/read
+
 Mark an email as unread.
 
-**Path Parameters:**
-- `id`: Entry ID
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Entry ID |
 
 **Response:** 200 OK or redirect
 
 ---
 
-### Thread Status Endpoints
+#### POST /clearances/{id}
 
-#### POST /topics/{id}/status/trashed
-Move a thread to Trash.
+Screen in (approve) or screen out (reject) a sender.
 
-**Path Parameters:**
-- `id`: Topic/Thread ID
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Clearance ID (from screener page HTML) |
 
-**Response:** 200 OK or redirect
+**Content-Type:** `application/x-www-form-urlencoded`
 
----
-
-#### POST /topics/{id}/status/active
-Restore a thread from Trash (make active again).
-
-**Path Parameters:**
-- `id`: Topic/Thread ID
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `_method` | string | Yes | `patch` |
+| `status` | string | Yes | `approved` (screen in) or `denied` (screen out) |
 
 **Response:** 200 OK or redirect
 
 ---
 
-#### POST /topics/{id}/status/spam
-Mark a thread as Spam.
+#### POST /postings/bubble_up
 
-**Path Parameters:**
-- `id`: Topic/Thread ID
+Schedule emails to bubble back up to Imbox.
 
-**Response:** 200 OK or redirect
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `posting_ids[]` | string | query | Posting ID(s) to bubble up (repeat for multiple) |
+| `slot` | string | query | When to bubble up (see values below) |
 
----
+**Slot Values:**
 
-#### POST /topics/{id}/status/ham
-Mark a thread as Not Spam (restore from spam).
+| Value | Description |
+|-------|-------------|
+| `now` | Immediately |
+| `today` | Later today (typically 18:00) |
+| `tomorrow` | Tomorrow morning (typically 08:00) |
+| `weekend` | This weekend (typically Saturday 08:00) |
+| `next_week` | Next week (typically Monday 08:00) |
 
-**Path Parameters:**
-- `id`: Topic/Thread ID
-
-**Response:** 200 OK or redirect
-
----
-
-### Thread Action Endpoints
-
-#### POST /topics/{id}/unseen
-Mark a thread as unseen/unread.
-
-**Path Parameters:**
-- `id`: Topic/Thread ID
+**Example:** `POST /postings/bubble_up?posting_ids[]=12345&slot=tomorrow`
 
 **Response:** 200 OK or redirect
-
----
 
 #### POST /topics/{id}/bubble_up
-Schedule a thread to bubble back up to Imbox.
 
-**Path Parameters:**
-- `id`: Topic/Thread ID
+Alternative endpoint for scheduling a single topic to bubble up.
 
-**Query Parameters:**
-- `slot`: When to bubble up. Values include:
-  - `now` - Immediately
-  - `today` - Later today (typically 18:00)
-  - `tomorrow` - Tomorrow morning (typically 08:00)
-  - `weekend` - This weekend (typically Saturday 08:00)
-  - `next_week` - Next week (typically Monday 08:00)
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Topic ID |
+| `slot` | string | query | When to bubble up (same values as above) |
+
+**Example:** `POST /topics/1906880181/bubble_up?slot=tomorrow`
 
 **Response:** 200 OK or redirect
+
+> **Note**: Both `/postings/bubble_up` and `/topics/{id}/bubble_up` endpoints work. The postings endpoint supports multiple IDs; the topics endpoint is simpler for single items.
 
 ---
 
 #### POST /postings/{id}/muting
+
 Ignore/mute a thread (stop receiving notifications).
 
-**Path Parameters:**
-- `id`: Posting ID
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Posting ID |
 
 **Response:** 200 OK or redirect
 
 ---
 
 #### DELETE /postings/{id}/muting
-Un-ignore/unmute a thread (resume receiving notifications).
 
-**Path Parameters:**
-- `id`: Posting ID
+Un-ignore/unmute a thread.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Posting ID |
+
+**Response:** 200 OK or redirect
+
+---
+
+### Thread Status
+
+#### POST /topics/{id}/status/trashed
+
+Move a thread to Trash.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Topic/Thread ID |
+
+**Response:** 200 OK or redirect
+
+---
+
+#### POST /topics/{id}/status/active
+
+Restore a thread from Trash.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Topic/Thread ID |
+
+**Response:** 200 OK or redirect
+
+---
+
+#### POST /topics/{id}/status/spam
+
+Mark a thread as Spam.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Topic/Thread ID |
+
+**Response:** 200 OK or redirect
+
+---
+
+#### POST /topics/{id}/status/ham
+
+Mark a thread as Not Spam (restore from spam).
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Topic/Thread ID |
+
+**Response:** 200 OK or redirect
+
+---
+
+#### POST /topics/{id}/unseen
+
+Mark a thread as unseen/unread.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Topic/Thread ID |
+
+**Response:** 200 OK or redirect
+
+---
+
+### Labels
+
+#### GET /folders
+
+List all labels/folders.
+
+**Response:** HTML page with all labels and their folder IDs
+
+---
+
+#### GET /folders/{id}
+
+View emails with a specific label.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Folder/Label ID |
+
+**Response:** HTML page with labelled emails
+
+---
+
+#### GET /my/navigation
+
+Get the navigation menu (includes all folders/labels).
+
+**Response:** HTML fragment with navigation structure
+
+---
+
+#### POST /topics/{id}/filings
+
+Add a label to a thread.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Topic/Thread ID |
+| `folder_id` | string | query | Label/folder ID to apply |
+
+**Response:** 200 OK or redirect
+
+---
+
+#### DELETE /topics/{id}/filings
+
+Remove a label from a thread.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Topic/Thread ID |
+| `folder_id` | string | query | Label/folder ID to remove |
+
+**Response:** 200 OK or redirect
+
+---
+
+### Collections
+
+#### GET /collections
+
+List all collections.
+
+**Response:** HTML page with collection list
+
+---
+
+#### GET /collections/{id}
+
+View emails in a specific collection.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Collection ID |
+
+**Response:** HTML page with collection emails
+
+---
+
+#### POST /topics/{id}/collecting
+
+Add a thread to a collection.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Topic/Thread ID |
+| `collection_id` | string | query | Collection ID to add to |
+
+**Response:** 200 OK or redirect
+
+---
+
+#### DELETE /topics/{id}/collecting
+
+Remove a thread from a collection.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Topic/Thread ID |
+| `collection_id` | string | query | Collection ID to remove from |
 
 **Response:** 200 OK or redirect
 
@@ -443,12 +693,26 @@ Hey.com uses Hotwire/Turbo for dynamic updates. Email lists are typically contai
 </div>
 ```
 
-## Session Expiry
+---
+
+## Session Management
 
 When a session expires, requests return a 302 redirect to `/sign_in`. The hey-mcp client detects this and triggers re-authentication.
 
-## Notes
+---
 
-- API structure may change as Hey.com updates their frontend
-- Some endpoints use Turbo Streams for partial updates
-- File attachments use a separate upload flow (not yet implemented)
+## Known Issues
+
+1. **Turbo Streams**: Some endpoints use Turbo Streams for partial updates, which may require special handling
+2. **File attachments**: Upload flow not yet implemented
+3. **Bulk operations**: Some bulk operations may use different endpoint patterns
+
+---
+
+## Changelog
+
+| Date | Change |
+|------|--------|
+| 2025-12 | Cookie name changed from `_hey_session` to `session_token` |
+| 2025-01 | Documented correct bubble up endpoint as `/postings/bubble_up?posting_ids[]={id}` |
+| 2025-01 | Documented compose page URL as `/messages/new` |

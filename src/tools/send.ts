@@ -46,10 +46,13 @@ async function getAccountInfo(): Promise<AccountInfo> {
   )
 
   // Try to find in compose form or settings link
-  const composeLink = root.querySelector("a[href*='/compose'], [data-compose]")
+  // Note: compose page is at /messages/new (not /compose)
+  const composeLink = root.querySelector(
+    "a[href*='/messages/new'], a[href*='/compose'], [data-compose]",
+  )
   if (composeLink) {
     // Fetch compose page for more accurate info
-    const composeHtml = await heyClient.fetchHtml("/compose")
+    const composeHtml = await heyClient.fetchHtml("/messages/new")
     const composeRoot = parseHtml(composeHtml)
 
     const composeSenderId = composeRoot

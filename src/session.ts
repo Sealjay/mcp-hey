@@ -100,10 +100,19 @@ export async function runAuthHelper(): Promise<boolean> {
   return false
 }
 
+// Skip validation if session was validated within this many milliseconds
+const VALIDATION_GRACE_PERIOD_MS = 5 * 60 * 1000 // 5 minutes
+
 export async function ensureValidSession(): Promise<Session | null> {
   let session = await loadSession()
 
   if (session) {
+    // Skip validation if session was validated recently
+    const timeSinceValidation = Date.now() - session.lastValidated
+    if (timeSinceValidation < VALIDATION_GRACE_PERIOD_MS) {
+      return session
+    }
+
     const isValid = await validateSession(session)
     if (isValid) {
       // Update last validated timestamp

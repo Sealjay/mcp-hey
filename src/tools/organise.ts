@@ -14,12 +14,37 @@ export async function setAside(emailId: string): Promise<OrganiseResult> {
   try {
     const csrfToken = await heyClient.getCsrfToken()
 
-    // Set aside is typically a PUT/POST to a specific endpoint
-    const response = await heyClient.put(
+    // Try multiple endpoints - Hey may use topics or entries
+    const endpoints = [
+      `/topics/${emailId}/set_aside`,
       `/entries/${emailId}/set_aside`,
-      undefined,
-      csrfToken,
-    )
+      `/topics/${emailId}/status/set_aside`,
+    ]
+
+    let response: Response | null = null
+    let lastError: string | null = null
+
+    for (const endpoint of endpoints) {
+      try {
+        // Try POST first (like bubble_up), then PUT
+        response = await heyClient.post(endpoint, undefined, csrfToken)
+        if (response.status >= 200 && response.status < 400) {
+          break // Success
+        }
+        // Try PUT as fallback
+        response = await heyClient.put(endpoint, undefined, csrfToken)
+        if (response.status >= 200 && response.status < 400) {
+          break // Success
+        }
+        lastError = `${endpoint} returned ${response.status}`
+      } catch (err) {
+        lastError = `${endpoint} failed: ${err instanceof Error ? err.message : "Unknown"}`
+      }
+    }
+
+    if (!response) {
+      return { success: false, error: lastError || "All endpoints failed" }
+    }
 
     if (response.status >= 200 && response.status < 300) {
       invalidateForAction("set_aside", emailId)
@@ -151,30 +176,18 @@ export async function screenIn(senderEmail: string): Promise<OrganiseResult> {
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const formData = new URLSearchParams()
-    formData.append("sender_email", senderEmail)
-
-    // Screen in approves the sender
-    const response = await heyClient.post(
-      "/screener/approvals",
-      formData,
-      csrfToken,
-    )
-
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("archive") // Screener changes affect imbox
-      return { success: true }
+    // First, we need to find the clearance ID for this sender
+    // by fetching the screener page and looking for the email
+    const clearanceId = await findClearanceIdByEmail(senderEmail)
+    if (!clearanceId) {
+      return {
+        success: false,
+        error: `Sender ${senderEmail} not found in screener. Use hey_list_screener to see pending senders.`,
+      }
     }
-    if (response.status === 302) {
-      invalidateForAction("archive")
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+
+    // Use the clearance ID to screen in
+    return screenInById(clearanceId)
   } catch (err) {
     return {
       success: false,
@@ -183,20 +196,96 @@ export async function screenIn(senderEmail: string): Promise<OrganiseResult> {
   }
 }
 
+/**
+ * Find a clearance ID by sender email from the screener page.
+ */
+async function findClearanceIdByEmail(
+  senderEmail: string,
+): Promise<string | null> {
+  const html = await heyClient.fetchHtml("/clearances")
+  const { parse: parseHtml } = await import("node-html-parser")
+  const root = parseHtml(html)
+
+  // Find forms that contain the sender email
+  const forms = root.querySelectorAll("form[action*='/clearances/']")
+  for (const form of forms) {
+    const formHtml = form.toString().toLowerCase()
+    if (formHtml.includes(senderEmail.toLowerCase())) {
+      const action = form.getAttribute("action")
+      const match = action?.match(/\/clearances\/(\d+)/)
+      if (match) {
+        return match[1]
+      }
+    }
+  }
+
+  // Also try looking in the surrounding article/section for the email
+  const articles = root.querySelectorAll(
+    "article, section, [data-clearance-id]",
+  )
+  for (const article of articles) {
+    const articleText = article.text.toLowerCase()
+    if (articleText.includes(senderEmail.toLowerCase())) {
+      // Find clearance ID in nested form
+      const form = article.querySelector("form[action*='/clearances/']")
+      const action = form?.getAttribute("action")
+      const match = action?.match(/\/clearances\/(\d+)/)
+      if (match) {
+        return match[1]
+      }
+      // Or from data attribute
+      const clearanceId = article.getAttribute("data-clearance-id")
+      if (clearanceId) {
+        return clearanceId
+      }
+    }
+  }
+
+  return null
+}
+
 export async function screenOut(senderEmail: string): Promise<OrganiseResult> {
   if (!senderEmail) {
     return { success: false, error: "Sender email is required" }
   }
 
   try {
+    // First, we need to find the clearance ID for this sender
+    const clearanceId = await findClearanceIdByEmail(senderEmail)
+    if (!clearanceId) {
+      return {
+        success: false,
+        error: `Sender ${senderEmail} not found in screener. Use hey_list_screener to see pending senders.`,
+      }
+    }
+
+    // Use the clearance ID to screen out
+    return screenOutById(clearanceId)
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export async function screenOutById(
+  clearanceId: string,
+): Promise<OrganiseResult> {
+  if (!clearanceId) {
+    return { success: false, error: "Clearance ID is required" }
+  }
+
+  try {
     const csrfToken = await heyClient.getCsrfToken()
 
+    // Hey uses POST with _method=patch and status=denied for screen out
     const formData = new URLSearchParams()
-    formData.append("sender_email", senderEmail)
+    formData.append("_method", "patch")
+    formData.append("status", "denied")
 
-    // Screen out rejects the sender
     const response = await heyClient.post(
-      "/screener/rejections",
+      `/clearances/${clearanceId}`,
       formData,
       csrfToken,
     )
@@ -460,14 +549,19 @@ export async function markAsUnseen(topicId: string): Promise<OrganiseResult> {
   }
 }
 
-export type BubbleUpSlot = "morning" | "afternoon" | "evening" | "weekend"
+export type BubbleUpSlot =
+  | "now"
+  | "today"
+  | "tomorrow"
+  | "weekend"
+  | "next_week"
 
 export async function bubbleUp(
-  topicId: string,
+  postingId: string,
   slot: BubbleUpSlot,
 ): Promise<OrganiseResult> {
-  if (!topicId) {
-    return { success: false, error: "Topic ID is required" }
+  if (!postingId) {
+    return { success: false, error: "Posting ID is required" }
   }
   if (!slot) {
     return { success: false, error: "Slot is required" }
@@ -476,18 +570,19 @@ export async function bubbleUp(
   try {
     const csrfToken = await heyClient.getCsrfToken()
 
+    // Correct endpoint: POST /postings/bubble_up?posting_ids[]={id}&slot={slot}
     const response = await heyClient.post(
-      `/topics/${topicId}/bubble_up?slot=${slot}`,
+      `/postings/bubble_up?posting_ids[]=${postingId}&slot=${slot}`,
       undefined,
       csrfToken,
     )
 
     if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("bubble_up", topicId)
+      invalidateForAction("bubble_up", postingId)
       return { success: true }
     }
     if (response.status === 302) {
-      invalidateForAction("bubble_up", topicId)
+      invalidateForAction("bubble_up", postingId)
       return { success: true }
     }
     return {
@@ -517,9 +612,11 @@ export async function ignoreThread(postingId: string): Promise<OrganiseResult> {
     )
 
     if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("mute", postingId)
       return { success: true }
     }
     if (response.status === 302) {
+      invalidateForAction("mute", postingId)
       return { success: true }
     }
     return {
@@ -550,9 +647,11 @@ export async function unignoreThread(
     )
 
     if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("unmute", postingId)
       return { success: true }
     }
     if (response.status === 302) {
+      invalidateForAction("unmute", postingId)
       return { success: true }
     }
     return {
@@ -577,18 +676,181 @@ export async function screenInById(
   try {
     const csrfToken = await heyClient.getCsrfToken()
 
+    // Hey uses POST with _method=patch and status=approved for screen in
+    const formData = new URLSearchParams()
+    formData.append("_method", "patch")
+    formData.append("status", "approved")
+
     const response = await heyClient.post(
       `/clearances/${clearanceId}`,
+      formData,
+      csrfToken,
+    )
+
+    if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("archive") // Screener changes affect imbox
+      return { success: true }
+    }
+    if (response.status === 302) {
+      invalidateForAction("archive")
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export async function addToCollection(
+  topicId: string,
+  collectionId: string,
+): Promise<OrganiseResult> {
+  if (!topicId) {
+    return { success: false, error: "Topic ID is required" }
+  }
+  if (!collectionId) {
+    return { success: false, error: "Collection ID is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const response = await heyClient.post(
+      `/topics/${topicId}/collecting?collection_id=${collectionId}`,
       undefined,
       csrfToken,
     )
 
     if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("archive")
+      invalidateForAction("collection", topicId)
       return { success: true }
     }
     if (response.status === 302) {
-      invalidateForAction("archive")
+      invalidateForAction("collection", topicId)
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export async function removeFromCollection(
+  topicId: string,
+  collectionId: string,
+): Promise<OrganiseResult> {
+  if (!topicId) {
+    return { success: false, error: "Topic ID is required" }
+  }
+  if (!collectionId) {
+    return { success: false, error: "Collection ID is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const response = await heyClient.delete(
+      `/topics/${topicId}/collecting?collection_id=${collectionId}`,
+      csrfToken,
+    )
+
+    if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("collection", topicId)
+      return { success: true }
+    }
+    if (response.status === 302) {
+      invalidateForAction("collection", topicId)
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export async function addLabel(
+  topicId: string,
+  labelId: string,
+): Promise<OrganiseResult> {
+  if (!topicId) {
+    return { success: false, error: "Topic ID is required" }
+  }
+  if (!labelId) {
+    return { success: false, error: "Label ID is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const response = await heyClient.post(
+      `/topics/${topicId}/filings?folder_id=${labelId}`,
+      undefined,
+      csrfToken,
+    )
+
+    if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("label", topicId)
+      return { success: true }
+    }
+    if (response.status === 302) {
+      invalidateForAction("label", topicId)
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export async function removeLabel(
+  topicId: string,
+  labelId: string,
+): Promise<OrganiseResult> {
+  if (!topicId) {
+    return { success: false, error: "Topic ID is required" }
+  }
+  if (!labelId) {
+    return { success: false, error: "Label ID is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const response = await heyClient.delete(
+      `/topics/${topicId}/filings?folder_id=${labelId}`,
+      csrfToken,
+    )
+
+    if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("label", topicId)
+      return { success: true }
+    }
+    if (response.status === 302) {
+      invalidateForAction("label", topicId)
       return { success: true }
     }
     return {

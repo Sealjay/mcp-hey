@@ -230,6 +230,12 @@ export class HeyClient {
 
   async fetchHtml(path: string): Promise<string> {
     const response = await this.fetch(path)
+
+    // Check for HTTP errors (404, 500, etc.)
+    if (!response.ok && response.status !== 302) {
+      throw new Error(`HTTP ${response.status}: Failed to fetch ${path}`)
+    }
+
     return response.text()
   }
 
@@ -270,20 +276,25 @@ export class HeyClient {
 
   async post(
     path: string,
-    body: URLSearchParams | FormData,
+    body?: URLSearchParams | FormData,
     csrfToken?: string,
   ): Promise<Response> {
     const session = await this.ensureSession()
     const token = csrfToken || (await this.getCsrfToken())
     const url = `${BASE_URL}${path}`
 
+    const headers: Record<string, string> = {
+      ...getAjaxHeaders(session, token),
+    }
+
+    if (body) {
+      headers["Content-Type"] = "application/x-www-form-urlencoded"
+    }
+
     const response = await fetchWithRetry(url, {
       method: "POST",
-      headers: {
-        ...getAjaxHeaders(session, token),
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: body.toString(),
+      headers,
+      body: body?.toString(),
       redirect: "manual",
     })
 

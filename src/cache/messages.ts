@@ -365,7 +365,11 @@ export function invalidateForAction(
     | "trash"
     | "restore"
     | "spam"
-    | "bubble_up",
+    | "bubble_up"
+    | "mute"
+    | "unmute"
+    | "collection"
+    | "label",
   messageId?: string,
 ): void {
   const now = unixNow()
@@ -437,10 +441,39 @@ export function invalidateForAction(
         "UPDATE sync_state SET requires_full_sync = 1 WHERE folder IN ('set_aside', 'imbox')",
       )
       break
+
+    case "mute":
+    case "unmute":
+      // Muting/unmuting affects thread notifications but not folder membership
+      if (messageId) {
+        execute("UPDATE messages SET cached_at = 0 WHERE id = ?", [messageId])
+      }
+      break
+
+    case "collection":
+      // Collection changes don't affect folder membership but may affect display
+      if (messageId) {
+        execute("UPDATE messages SET cached_at = 0 WHERE id = ?", [messageId])
+      }
+      // Invalidate collection-related queries
+      execute("UPDATE sync_state SET requires_full_sync = 1")
+      break
+
+    case "label":
+      // Label changes affect folder organization
+      if (messageId) {
+        execute("UPDATE messages SET cached_at = 0 WHERE id = ?", [messageId])
+      }
+      // Invalidate all folders since labels can span across views
+      execute("UPDATE sync_state SET requires_full_sync = 1")
+      break
   }
 
   // Always invalidate search cache on mutations
   execute("DELETE FROM search_cache WHERE cached_at < ?", [now])
+
+  // Invalidate folder HTML cache (used by imbox summary)
+  execute("DELETE FROM folder_html")
 }
 
 /**
@@ -505,5 +538,54 @@ export function getCacheStats(): {
       ? new Date(oldest.cached_at * 1000).toISOString()
       : null,
     cache_size_estimate: messageCount * 500 + bodyCount * 5000, // Rough bytes estimate
+  }
+}
+
+/**
+ * Cache folder HTML for later re-parsing (e.g., for summary extraction).
+ */
+export function cacheFolderHtml(
+  folder: string,
+  html: string,
+  ttlSeconds?: number,
+): void {
+  const now = unixNow()
+  const ttl =
+    ttlSeconds ??
+    (folder === "imbox" ? TTL_CONFIG.inbox_list : TTL_CONFIG.folder_list)
+
+  execute(
+    `INSERT OR REPLACE INTO folder_html (folder, html, cached_at, ttl_seconds)
+     VALUES (?, ?, ?, ?)`,
+    [folder, html, now, ttl],
+  )
+}
+
+/**
+ * Get cached folder HTML if fresh.
+ */
+export function getCachedFolderHtml(
+  folder: string,
+): { html: string; metadata: CacheMetadata } | null {
+  const row = queryOne<{
+    html: string
+    cached_at: number
+    ttl_seconds: number
+  }>("SELECT html, cached_at, ttl_seconds FROM folder_html WHERE folder = ?", [
+    folder,
+  ])
+
+  if (!row) {
+    return null
+  }
+
+  // Check if expired
+  if (isExpired(row.cached_at, row.ttl_seconds)) {
+    return null
+  }
+
+  return {
+    html: row.html,
+    metadata: createCacheMetadata("cache", row.cached_at, row.ttl_seconds),
   }
 }

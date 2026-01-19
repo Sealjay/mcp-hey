@@ -3,10 +3,12 @@ import {
   type CacheMetadata,
   type CachedResult,
   cacheEmailDetail,
+  cacheFolderHtml,
   cacheMessages,
   cacheSearchResults,
   ftsSearch,
   getCachedEmailDetail,
+  getCachedFolderHtml,
   getCachedMessages,
   getCachedSearch,
   needsRefresh,
@@ -14,7 +16,10 @@ import {
 import { heyClient } from "../hey-client"
 
 export interface Email {
-  id: string
+  id: string // Primary ID (topic ID when available, otherwise best available)
+  topicId?: string // For /topics/{id}/* operations (bubble_up, trash, etc.)
+  entryId?: string // For /entries/{id}/* operations (set_aside, reply_later, read)
+  postingId?: string // For /postings/{id}/* operations (muting)
   from: string
   fromEmail?: string
   subject: string
@@ -23,6 +28,7 @@ export interface Email {
   unread?: boolean
   bubbledUp?: boolean
   label?: string
+  clearanceId?: string // For screener entries
 }
 
 export interface ImboxSummary {
@@ -57,6 +63,11 @@ export interface Label {
   color?: string
 }
 
+export interface Collection {
+  id: string
+  name: string
+}
+
 export interface SearchOptions {
   limit?: number
   forceRefresh?: boolean
@@ -71,8 +82,56 @@ function extractEmailsFromHtml(html: string): Email[] {
     const entries = root.querySelectorAll("article.posting")
 
     for (const entry of entries) {
-      // ID is in data-identifier attribute
-      const id = entry.getAttribute("data-identifier")
+      // Extract multiple ID types from different sources
+      // 1. Posting ID from data-identifier attribute
+      const postingId = entry
+        .getAttribute("data-identifier")
+        ?.replace(/^(posting_|entry_)/, "")
+
+      // 2. Entry ID from data-entry-id attribute
+      const entryId = entry
+        .getAttribute("data-entry-id")
+        ?.replace(/^entry_/, "")
+
+      // 3. Topic ID from href links within the article
+      let topicId: string | undefined
+      const topicLink = entry.querySelector("a[href*='/topics/']")
+      if (topicLink) {
+        const href = topicLink.getAttribute("href") || ""
+        const topicMatch = href.match(/\/topics\/(\d+)/)
+        if (topicMatch) {
+          topicId = topicMatch[1]
+        }
+      }
+
+      // If no topic link inside, check if the posting__title or posting__link is a topic link
+      if (!topicId) {
+        const titleLink = entry.querySelector(
+          ".posting__title a[href*='/topics/'], .posting__link[href*='/topics/']",
+        )
+        if (titleLink) {
+          const href = titleLink.getAttribute("href") || ""
+          const topicMatch = href.match(/\/topics\/(\d+)/)
+          if (topicMatch) {
+            topicId = topicMatch[1]
+          }
+        }
+      }
+
+      // Also check any link within the entry for topic ID
+      if (!topicId) {
+        const anyLink = entry.querySelector("a[href]")
+        if (anyLink) {
+          const href = anyLink.getAttribute("href") || ""
+          const topicMatch = href.match(/\/topics\/(\d+)/)
+          if (topicMatch) {
+            topicId = topicMatch[1]
+          }
+        }
+      }
+
+      // Primary ID: prefer topic ID > entry ID > posting ID
+      const id = topicId || entryId || postingId
       if (!id) continue
 
       // Subject is in .posting__title
@@ -106,6 +165,9 @@ function extractEmailsFromHtml(html: string): Email[] {
 
       emails.push({
         id,
+        topicId,
+        entryId,
+        postingId,
         from,
         subject,
         snippet,
@@ -116,29 +178,142 @@ function extractEmailsFromHtml(html: string): Email[] {
       })
     }
 
-    // Fallback for screener page: look for clearance articles
+    // Fallback for screener page: extract clearance entries from article elements
+    // Hey.com screener page structure (from browser inspection):
+    // <article>
+    //   <button>
+    //     <img alt="sender@email.com">
+    //     <h2>sender@email.com <sender@email.com></h2>  <!-- SENDER EMAIL -->
+    //     <div>Subject Line</div>
+    //     <div>– Snippet text...</div>
+    //   </button>
+    //   <a href="/contacts/...">recipient@email.com</a>  <!-- IGNORE: this is the user -->
+    //   <form action="/clearances/{id}">
+    //     <input type="hidden" value="patch">
+    //     <input type="hidden" value="approved">
+    //     <!-- or clearance ID in a hidden input -->
+    //   </form>
+    // </article>
     if (emails.length === 0) {
-      const clearanceEntries = root.querySelectorAll("article")
-      for (const entry of clearanceEntries) {
-        // Screener entries have sender email in heading
-        const headingEl = entry.querySelector("h4, h3, heading")
-        const subjectEl = entry.querySelector(
-          '[class*="subject"], [class*="topic"]',
-        )
+      const articles = root.querySelectorAll("article")
 
-        // Look for hidden input with posting ID
-        const idInput = entry.querySelector('input[type="hidden"][value]')
-        const id = idInput?.getAttribute("value")
+      for (const article of articles) {
+        // Look for the heading with the "email <email>" pattern - this is the SENDER
+        const headings = article.querySelectorAll("h1, h2, h3, h4, h5, h6")
+        let fromEmail = ""
+        let from = ""
 
-        if (!id) continue
+        for (const heading of headings) {
+          const headingText = heading.text?.trim() || ""
+          // Match "email <email>" pattern
+          const emailPattern =
+            /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\s*<([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})>/
+          const emailMatch = headingText.match(emailPattern)
+          if (emailMatch) {
+            fromEmail = emailMatch[2] || emailMatch[1]
+            from = fromEmail.split("@")[0]
+            break
+          }
+        }
 
-        const from = headingEl?.text?.trim()?.split("<")[0]?.trim() || "Unknown"
-        const subject = subjectEl?.text?.trim() || "(No subject)"
+        // If no heading match, try the image alt attribute (also contains sender email)
+        if (!fromEmail) {
+          const img = article.querySelector("img[alt*='@']")
+          const imgAlt = img?.getAttribute("alt") || ""
+          const imgEmailMatch = imgAlt.match(
+            /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/,
+          )
+          if (imgEmailMatch) {
+            fromEmail = imgEmailMatch[1]
+            from = fromEmail.split("@")[0]
+          }
+        }
+
+        if (!fromEmail) continue // No sender email found, skip this article
+
+        // Find clearance ID - try form action first, then hidden inputs
+        let clearanceId = ""
+        const forms = article.querySelectorAll("form")
+        for (const form of forms) {
+          const action = form.getAttribute("action") || ""
+          const actionMatch = action.match(/\/clearances\/(\d+)/)
+          if (actionMatch) {
+            clearanceId = actionMatch[1]
+            break
+          }
+          // Also check hidden inputs for clearance ID (numeric value that's not "patch"/"approved"/"denied")
+          const hiddenInputs = form.querySelectorAll("input[type='hidden']")
+          for (const input of hiddenInputs) {
+            const value = input.getAttribute("value") || ""
+            if (/^\d{5,}$/.test(value)) {
+              // Looks like a clearance ID (long numeric)
+              clearanceId = value
+              break
+            }
+          }
+          if (clearanceId) break
+        }
+
+        if (!clearanceId) continue // No clearance ID found, skip
+
+        // Extract subject and snippet from article text
+        // Get all text, then look for content after the email heading
+        const articleText = article.text || ""
+
+        // Find the subject - it's the line after the email, before the dash
+        // Skip button text like "Yes", "No", "Screen in", etc.
+        const lines = articleText
+          .split(/\n/)
+          .map((l) => l.trim())
+          .filter((l) => l)
+        let subject = "(Screener entry)"
+        let snippet = ""
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i]
+          // Skip the email header line
+          if (line.includes(fromEmail)) continue
+          // Skip button/action text
+          if (/^(Yes|No|Screen\s+(in|out)|Done|Clear)/i.test(line)) continue
+          // Skip recipient email links
+          if (/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(line))
+            continue
+          // Skip dates
+          if (
+            /^(January|February|March|April|May|June|July|August|September|October|November|December)/i.test(
+              line,
+            )
+          )
+            continue
+          // Skip navigation items
+          if (/^(Imbox|The Feed|Paper Trail|Reply Later|Set Aside)/i.test(line))
+            continue
+
+          // This might be the subject line
+          if (line.startsWith("–")) {
+            // This is the snippet
+            snippet = line.slice(1).trim()
+          } else if (
+            line.length > 10 &&
+            !line.includes("Screen") &&
+            !line.includes("options for")
+          ) {
+            subject = line
+            // Look for snippet in next line
+            if (i + 1 < lines.length && lines[i + 1].startsWith("–")) {
+              snippet = lines[i + 1].slice(1).trim()
+            }
+            break
+          }
+        }
 
         emails.push({
-          id,
+          id: clearanceId,
+          clearanceId,
           from,
+          fromEmail,
           subject,
+          snippet,
           unread: true,
         })
       }
@@ -453,6 +628,10 @@ async function listFolder(
   // Update cache (only for first page)
   if (page === 1) {
     cacheMessages(folder, emails)
+    // Cache raw HTML for imbox (enables summary extraction without network)
+    if (folder === "imbox") {
+      cacheFolderHtml(folder, html)
+    }
   }
 
   return {
@@ -476,9 +655,26 @@ export async function getImboxSummary(
 ): Promise<CachedResult<ImboxSummary>> {
   const { forceRefresh = false } = options
 
-  // Fetch from network (always fresh for summary)
+  // Check cache first (unless force refresh requested)
+  if (!forceRefresh) {
+    const cachedHtml = getCachedFolderHtml("imbox")
+    if (cachedHtml) {
+      const summary = extractImboxSummary(cachedHtml.html)
+      return {
+        data: summary,
+        _cache: cachedHtml.metadata,
+      }
+    }
+  }
+
+  // Fetch from network
   const html = await heyClient.fetchHtml("/imbox")
   const summary = extractImboxSummary(html)
+
+  // Cache the HTML for future summary requests
+  cacheFolderHtml("imbox", html)
+  // Also cache the extracted messages
+  cacheMessages("imbox", summary.emails)
 
   return {
     data: summary,
@@ -578,6 +774,51 @@ export async function listLabels(): Promise<Label[]> {
   return extractLabelsFromHtml(html)
 }
 
+function extractCollectionsFromHtml(html: string): Collection[] {
+  try {
+    const root = parseHtml(html)
+    const collections: Collection[] = []
+
+    // Collections page has links to /collections/{id}
+    const links = root.querySelectorAll("a[href*='/collections/']")
+
+    for (const link of links) {
+      const href = link.getAttribute("href")
+      const match = href?.match(/\/collections\/(\d+)/)
+      if (!match) continue
+
+      const id = match[1]
+      const name = link.text?.trim() || "Unnamed"
+
+      // Skip if it's just "All Collections" link
+      if (name === "All Collections") continue
+
+      collections.push({ id, name })
+    }
+
+    return collections
+  } catch (err) {
+    console.error("[hey-mcp] Failed to parse collections HTML:", err)
+    return []
+  }
+}
+
+export async function listCollections(): Promise<Collection[]> {
+  const html = await heyClient.fetchHtml("/collections")
+  return extractCollectionsFromHtml(html)
+}
+
+export async function listCollectionEmails(
+  collectionId: string,
+  options: ListOptions = {},
+): Promise<CachedResult<Email[]>> {
+  return listFolder(
+    `collection_${collectionId}`,
+    `/collections/${collectionId}`,
+    options,
+  )
+}
+
 export async function listLabelEmails(
   labelId: string,
   options: ListOptions = {},
@@ -601,10 +842,43 @@ export async function readEmail(
     }
   }
 
-  // Fetch from network
-  const path = format === "text" ? `/messages/${id}.text` : `/messages/${id}`
-  const content = await heyClient.fetchHtml(path)
+  // Fetch from network - try /topics first (most common ID type), then /messages
+  let content = ""
   const isRawText = format === "text"
+
+  if (format === "text") {
+    // For text format, only /messages supports .text extension
+    content = await heyClient.fetchHtml(`/messages/${id}.text`)
+  } else {
+    // For HTML format, try multiple endpoints in order of likelihood
+    // Hey.com uses different ID types for different resources:
+    // - topicId: threads (conversations) at /topics/{id}
+    // - postingId: individual email entries at /postings/{id}
+    // - entryId: inbox entries at /entries/{id}
+    // - messageId: raw messages at /messages/{id}
+    const endpoints = [
+      `/postings/${id}`,
+      `/topics/${id}`,
+      `/entries/${id}`,
+      `/messages/${id}`,
+    ]
+
+    let lastError: Error | null = null
+    for (const endpoint of endpoints) {
+      try {
+        content = await heyClient.fetchHtml(endpoint)
+        break // Success - exit the loop
+      } catch (err) {
+        lastError = err as Error
+        console.error(`[hey-mcp] ${endpoint} failed:`, err)
+      }
+    }
+
+    if (!content && lastError) {
+      throw lastError
+    }
+  }
+
   const email = extractEmailDetail(content, id, isRawText)
 
   // Update cache

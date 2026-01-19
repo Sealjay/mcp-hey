@@ -256,6 +256,129 @@ describe("Cache Metadata", () => {
   })
 })
 
+describe("Folder HTML Cache", () => {
+  let db: Database
+
+  beforeEach(() => {
+    if (existsSync(TEST_DB_PATH)) {
+      rmSync(TEST_DB_PATH)
+    }
+    db = new Database(TEST_DB_PATH, { create: true })
+    db.run(`
+      CREATE TABLE folder_html (
+        folder TEXT PRIMARY KEY,
+        html TEXT NOT NULL,
+        cached_at INTEGER NOT NULL,
+        ttl_seconds INTEGER NOT NULL
+      )
+    `)
+  })
+
+  afterEach(() => {
+    db.close()
+    if (existsSync(TEST_DB_PATH)) {
+      rmSync(TEST_DB_PATH)
+    }
+  })
+
+  test("should store folder HTML with TTL", () => {
+    const now = Math.floor(Date.now() / 1000)
+    const html = "<html><body>Test content</body></html>"
+
+    db.query(`
+      INSERT INTO folder_html (folder, html, cached_at, ttl_seconds)
+      VALUES ('imbox', ?, ?, 120)
+    `).run(html, now)
+
+    const result = db
+      .query("SELECT * FROM folder_html WHERE folder = 'imbox'")
+      .get() as {
+      folder: string
+      html: string
+      cached_at: number
+      ttl_seconds: number
+    }
+
+    expect(result).toBeTruthy()
+    expect(result.folder).toBe("imbox")
+    expect(result.html).toBe(html)
+    expect(result.ttl_seconds).toBe(120)
+  })
+
+  test("should replace existing HTML on upsert", () => {
+    const now = Math.floor(Date.now() / 1000)
+
+    db.query(`
+      INSERT INTO folder_html (folder, html, cached_at, ttl_seconds)
+      VALUES ('imbox', 'old html', ?, 120)
+    `).run(now - 60)
+
+    db.query(`
+      INSERT OR REPLACE INTO folder_html (folder, html, cached_at, ttl_seconds)
+      VALUES ('imbox', 'new html', ?, 120)
+    `).run(now)
+
+    const result = db
+      .query("SELECT * FROM folder_html WHERE folder = 'imbox'")
+      .get() as {
+      html: string
+      cached_at: number
+    }
+
+    expect(result.html).toBe("new html")
+    expect(result.cached_at).toBe(now)
+  })
+
+  test("should detect expired HTML cache", () => {
+    const now = Math.floor(Date.now() / 1000)
+    const cachedAt = now - 180 // 3 minutes ago
+    const ttlSeconds = 120 // 2 minute TTL
+
+    const isExpired = now > cachedAt + ttlSeconds
+    expect(isExpired).toBe(true)
+  })
+
+  test("should detect fresh HTML cache", () => {
+    const now = Math.floor(Date.now() / 1000)
+    const cachedAt = now - 60 // 1 minute ago
+    const ttlSeconds = 120 // 2 minute TTL
+
+    const isExpired = now > cachedAt + ttlSeconds
+    expect(isExpired).toBe(false)
+  })
+
+  test("should clean up expired entries", () => {
+    const now = Math.floor(Date.now() / 1000)
+
+    // Insert expired entry
+    db.query(`
+      INSERT INTO folder_html (folder, html, cached_at, ttl_seconds)
+      VALUES ('expired_folder', 'old html', ?, 60)
+    `).run(now - 120) // 2 minutes ago with 1 minute TTL
+
+    // Insert fresh entry
+    db.query(`
+      INSERT INTO folder_html (folder, html, cached_at, ttl_seconds)
+      VALUES ('fresh_folder', 'new html', ?, 120)
+    `).run(now - 30) // 30 seconds ago with 2 minute TTL
+
+    // Run cleanup (similar to maintenance)
+    db.query(`
+      DELETE FROM folder_html WHERE cached_at + ttl_seconds < ?
+    `).run(now)
+
+    const expired = db
+      .query("SELECT * FROM folder_html WHERE folder = 'expired_folder'")
+      .get()
+    const fresh = db
+      .query("SELECT * FROM folder_html WHERE folder = 'fresh_folder'")
+      .get()
+
+    expect(expired).toBeNull()
+    expect(fresh).toBeTruthy()
+  })
+})
+
 describe("FTS Query Sanitization", () => {
   function sanitizeFtsQuery(input: string): string | null {
     if (!input || input.trim().length === 0) {
