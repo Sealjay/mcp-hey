@@ -55,7 +55,7 @@ export function getCookieHeader(session: Session): string {
 export async function validateSession(session: Session): Promise<boolean> {
   try {
     const cookieHeader = getCookieHeader(session)
-    const response = await fetch("https://app.hey.com/my/entries", {
+    const response = await fetch("https://app.hey.com/imbox", {
       method: "HEAD",
       headers: {
         Host: "app.hey.com",

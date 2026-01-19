@@ -287,3 +287,318 @@ export async function markAsUnread(emailId: string): Promise<OrganiseResult> {
     }
   }
 }
+
+export async function trashEmail(topicId: string): Promise<OrganiseResult> {
+  if (!topicId) {
+    return { success: false, error: "Topic ID is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const response = await heyClient.post(
+      `/topics/${topicId}/status/trashed`,
+      undefined,
+      csrfToken,
+    )
+
+    if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("trash", topicId)
+      return { success: true }
+    }
+    if (response.status === 302) {
+      invalidateForAction("trash", topicId)
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export async function restoreFromTrash(
+  topicId: string,
+): Promise<OrganiseResult> {
+  if (!topicId) {
+    return { success: false, error: "Topic ID is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const response = await heyClient.post(
+      `/topics/${topicId}/status/active`,
+      undefined,
+      csrfToken,
+    )
+
+    if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("restore", topicId)
+      return { success: true }
+    }
+    if (response.status === 302) {
+      invalidateForAction("restore", topicId)
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export async function markAsSpam(topicId: string): Promise<OrganiseResult> {
+  if (!topicId) {
+    return { success: false, error: "Topic ID is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const response = await heyClient.post(
+      `/topics/${topicId}/status/spam`,
+      undefined,
+      csrfToken,
+    )
+
+    if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("spam", topicId)
+      return { success: true }
+    }
+    if (response.status === 302) {
+      invalidateForAction("spam", topicId)
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export async function markAsNotSpam(topicId: string): Promise<OrganiseResult> {
+  if (!topicId) {
+    return { success: false, error: "Topic ID is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const response = await heyClient.post(
+      `/topics/${topicId}/status/ham`,
+      undefined,
+      csrfToken,
+    )
+
+    if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("restore", topicId)
+      return { success: true }
+    }
+    if (response.status === 302) {
+      invalidateForAction("restore", topicId)
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export async function markAsUnseen(topicId: string): Promise<OrganiseResult> {
+  if (!topicId) {
+    return { success: false, error: "Topic ID is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const response = await heyClient.post(
+      `/topics/${topicId}/unseen`,
+      undefined,
+      csrfToken,
+    )
+
+    if (response.status >= 200 && response.status < 300) {
+      updateReadStatus(topicId, false)
+      return { success: true }
+    }
+    if (response.status === 302) {
+      updateReadStatus(topicId, false)
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export type BubbleUpSlot = "morning" | "afternoon" | "evening" | "weekend"
+
+export async function bubbleUp(
+  topicId: string,
+  slot: BubbleUpSlot,
+): Promise<OrganiseResult> {
+  if (!topicId) {
+    return { success: false, error: "Topic ID is required" }
+  }
+  if (!slot) {
+    return { success: false, error: "Slot is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const response = await heyClient.post(
+      `/topics/${topicId}/bubble_up?slot=${slot}`,
+      undefined,
+      csrfToken,
+    )
+
+    if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("bubble_up", topicId)
+      return { success: true }
+    }
+    if (response.status === 302) {
+      invalidateForAction("bubble_up", topicId)
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export async function ignoreThread(postingId: string): Promise<OrganiseResult> {
+  if (!postingId) {
+    return { success: false, error: "Posting ID is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const response = await heyClient.post(
+      `/postings/${postingId}/muting`,
+      undefined,
+      csrfToken,
+    )
+
+    if (response.status >= 200 && response.status < 300) {
+      return { success: true }
+    }
+    if (response.status === 302) {
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export async function unignoreThread(
+  postingId: string,
+): Promise<OrganiseResult> {
+  if (!postingId) {
+    return { success: false, error: "Posting ID is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const response = await heyClient.delete(
+      `/postings/${postingId}/muting`,
+      csrfToken,
+    )
+
+    if (response.status >= 200 && response.status < 300) {
+      return { success: true }
+    }
+    if (response.status === 302) {
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export async function screenInById(
+  clearanceId: string,
+): Promise<OrganiseResult> {
+  if (!clearanceId) {
+    return { success: false, error: "Clearance ID is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const response = await heyClient.post(
+      `/clearances/${clearanceId}`,
+      undefined,
+      csrfToken,
+    )
+
+    if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("archive")
+      return { success: true }
+    }
+    if (response.status === 302) {
+      invalidateForAction("archive")
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
