@@ -591,10 +591,24 @@ export type BubbleUpSlot =
   | "tomorrow"
   | "weekend"
   | "next_week"
+  | "surprise_me"
+  | "custom"
+
+/**
+ * Validate a date string in YYYY-MM-DD format.
+ */
+function isValidDate(dateStr: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return false
+  }
+  const date = new Date(dateStr)
+  return !Number.isNaN(date.getTime())
+}
 
 export async function bubbleUp(
   postingId: string,
   slot: BubbleUpSlot,
+  date?: string,
 ): Promise<OrganiseResult> {
   if (!postingId) {
     return { success: false, error: "Posting ID is required" }
@@ -602,16 +616,86 @@ export async function bubbleUp(
   if (!slot) {
     return { success: false, error: "Slot is required" }
   }
+  if (slot === "custom" && !date) {
+    return {
+      success: false,
+      error: "Date is required when using 'custom' slot (YYYY-MM-DD format)",
+    }
+  }
+  if (date && !isValidDate(date)) {
+    return {
+      success: false,
+      error: "Date must be in YYYY-MM-DD format",
+    }
+  }
 
   try {
     const csrfToken = await heyClient.getCsrfToken()
 
-    // Correct endpoint: POST /postings/bubble_up?posting_ids[]={id}&slot={slot}
-    const response = await heyClient.post(
-      `/postings/bubble_up?posting_ids[]=${postingId}&slot=${slot}`,
-      undefined,
-      csrfToken,
-    )
+    // Build the endpoint URL
+    const endpoint = `/postings/bubble_up?posting_ids[]=${postingId}&slot=${slot}`
+
+    // For custom slot, include date in the POST body
+    let formData: URLSearchParams | undefined
+    if (slot === "custom" && date) {
+      formData = new URLSearchParams()
+      formData.append("date", date)
+    }
+
+    const response = await heyClient.post(endpoint, formData, csrfToken)
+
+    if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("bubble_up", postingId)
+      return { success: true }
+    }
+    if (response.status === 302) {
+      invalidateForAction("bubble_up", postingId)
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+/**
+ * Schedule an email to bubble up ONLY if there's no reply by a specific date.
+ * This is a conditional bubble-up - the email will only reappear if the
+ * recipient hasn't replied by the deadline.
+ */
+export async function bubbleUpIfNoReply(
+  postingId: string,
+  date: string,
+): Promise<OrganiseResult> {
+  if (!postingId) {
+    return { success: false, error: "Posting ID is required" }
+  }
+  if (!date) {
+    return { success: false, error: "Date is required (YYYY-MM-DD format)" }
+  }
+  if (!isValidDate(date)) {
+    return {
+      success: false,
+      error: "Date must be in YYYY-MM-DD format",
+    }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+
+    // Use custom slot with waiting_on=true for conditional bubble-up
+    const endpoint = `/postings/bubble_up?posting_ids[]=${postingId}&slot=custom&waiting_on=true`
+
+    const formData = new URLSearchParams()
+    formData.append("date", date)
+
+    const response = await heyClient.post(endpoint, formData, csrfToken)
 
     if (response.status >= 200 && response.status < 300) {
       invalidateForAction("bubble_up", postingId)

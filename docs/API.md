@@ -495,6 +495,13 @@ Schedule emails to bubble back up to Imbox.
 |-----------|------|----------|-------------|
 | `posting_ids[]` | string | query | Posting ID(s) to bubble up (repeat for multiple) |
 | `slot` | string | query | When to bubble up (see values below) |
+| `waiting_on` | boolean | query | If `true`, makes bubble-up conditional on no reply (use with `slot=custom`) |
+
+**POST Body (for `custom` slot):**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `date` | string | Yes (for custom) | Date in YYYY-MM-DD format |
 
 **Slot Values:**
 
@@ -505,8 +512,36 @@ Schedule emails to bubble back up to Imbox.
 | `tomorrow` | Tomorrow morning (typically 08:00) |
 | `weekend` | This weekend (typically Saturday 08:00) |
 | `next_week` | Next week (typically Monday 08:00) |
+| `surprise_me` | Random time chosen by Hey |
+| `custom` | Specific date (requires `date` in POST body) |
 
-**Example:** `POST /postings/bubble_up?posting_ids[]=12345&slot=tomorrow`
+**Examples:**
+
+Standard bubble-up:
+```
+POST /postings/bubble_up?posting_ids[]=12345&slot=tomorrow
+```
+
+Surprise me (random time):
+```
+POST /postings/bubble_up?posting_ids[]=12345&slot=surprise_me
+```
+
+Custom date:
+```
+POST /postings/bubble_up?posting_ids[]=12345&slot=custom
+Content-Type: application/x-www-form-urlencoded
+
+date=2026-01-28
+```
+
+Conditional bubble-up (if no reply by date):
+```
+POST /postings/bubble_up?posting_ids[]=12345&slot=custom&waiting_on=true
+Content-Type: application/x-www-form-urlencoded
+
+date=2026-01-28
+```
 
 **Response:** 200 OK or redirect
 
@@ -518,6 +553,7 @@ Alternative endpoint for scheduling a single topic to bubble up.
 |-----------|------|----------|-------------|
 | `id` | string | path | Topic ID |
 | `slot` | string | query | When to bubble up (same values as above) |
+| `waiting_on` | boolean | query | If `true`, makes bubble-up conditional on no reply |
 
 **Example:** `POST /topics/1906880181/bubble_up?slot=tomorrow`
 
@@ -818,3 +854,5 @@ When a session expires, requests return a 302 redirect to `/sign_in`. The hey-mc
 | 2026-01 | Compose page sender selection changed from `<input>` elements to `<select>` dropdown; email now in option text content |
 | 2026-01 | **BREAKING**: Reply Later "Done" action uses `POST /postings/moves?box_id={boxId}` with `posting_ids` form field, NOT `DELETE /entries/{id}/reply_later` |
 | 2026-01 | Added Paper Trail bundles endpoint: `GET /postings/{id}/bundles/unseen` for grouped transactional emails |
+| 2026-01 | Added new bubble-up slot values: `surprise_me` (random time), `custom` (specific date with `date` POST body) |
+| 2026-01 | Added `waiting_on=true` query parameter for conditional bubble-up (only bubble up if no reply by date) |
