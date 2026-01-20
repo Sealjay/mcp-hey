@@ -21,6 +21,7 @@ import {
   addLabel,
   addToCollection,
   bubbleUp,
+  bubbleUpIfNoReply,
   ignoreThread,
   markAsNotSpam,
   markAsSpam,
@@ -744,7 +745,7 @@ const tools: Tool[] = [
   {
     name: "hey_bubble_up",
     description:
-      "Schedule an email to bubble up (reappear) at a specific time slot",
+      "Schedule an email to bubble up (reappear) at a specific time slot. Use 'custom' slot with a date for a specific date, or 'surprise_me' for a random time.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -754,12 +755,45 @@ const tools: Tool[] = [
         },
         slot: {
           type: "string",
-          enum: ["now", "today", "tomorrow", "weekend", "next_week"],
+          enum: [
+            "now",
+            "today",
+            "tomorrow",
+            "weekend",
+            "next_week",
+            "surprise_me",
+            "custom",
+          ],
           description:
-            "When to bubble up: now (immediately), today (evening), tomorrow (morning), weekend (Saturday), next_week (Monday)",
+            "When to bubble up: now (immediately), today (evening), tomorrow (morning), weekend (Saturday), next_week (Monday), surprise_me (random), custom (specific date - requires 'date' parameter)",
+        },
+        date: {
+          type: "string",
+          description:
+            "Date in YYYY-MM-DD format. Required when slot is 'custom', ignored otherwise.",
         },
       },
       required: ["posting_id", "slot"],
+    },
+  },
+  {
+    name: "hey_bubble_up_if_no_reply",
+    description:
+      "Schedule an email to bubble up ONLY if there's no reply by a specific date. This is a conditional bubble-up - the email will only reappear if the recipient hasn't replied by the deadline.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        posting_id: {
+          type: "string",
+          description: "The posting ID to schedule",
+        },
+        date: {
+          type: "string",
+          description:
+            "Deadline date in YYYY-MM-DD format. The email will bubble up only if no reply is received by this date.",
+        },
+      },
+      required: ["posting_id", "date"],
     },
   },
   {
@@ -1311,6 +1345,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "hey_bubble_up": {
         const postingId = validateId(args?.posting_id)
         const slot = args?.slot as BubbleUpSlot
+        const date = args?.date as string | undefined
         if (!postingId) {
           return {
             content: [
@@ -1322,21 +1357,55 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
-        if (
-          !slot ||
-          !["now", "today", "tomorrow", "weekend", "next_week"].includes(slot)
-        ) {
+        const validSlots = [
+          "now",
+          "today",
+          "tomorrow",
+          "weekend",
+          "next_week",
+          "surprise_me",
+          "custom",
+        ]
+        if (!slot || !validSlots.includes(slot)) {
           return {
             content: [
               {
                 type: "text",
-                text: "Error: slot is required and must be one of: now, today, tomorrow, weekend, next_week",
+                text: "Error: slot is required and must be one of: now, today, tomorrow, weekend, next_week, surprise_me, custom",
               },
             ],
             isError: true,
           }
         }
-        result = await bubbleUp(postingId, slot)
+        result = await bubbleUp(postingId, slot, date)
+        break
+      }
+      case "hey_bubble_up_if_no_reply": {
+        const postingId = validateId(args?.posting_id)
+        const date = args?.date as string | undefined
+        if (!postingId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: posting_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        if (!date) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: date is required (YYYY-MM-DD format)",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await bubbleUpIfNoReply(postingId, date)
         break
       }
       case "hey_ignore_thread": {

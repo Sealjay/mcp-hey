@@ -2,7 +2,7 @@
 
 This document provides detailed documentation for all MCP tools provided by hey-mcp.
 
-**Total Tools: 38**
+**Total Tools: 39**
 
 ---
 
@@ -11,7 +11,7 @@ This document provides detailed documentation for all MCP tools provided by hey-
 - [Reading Tools](#reading-tools) (15 tools)
 - [Search Tool](#search-tool) (1 tool)
 - [Sending Tools](#sending-tools) (2 tools)
-- [Organisation Tools](#organisation-tools) (19 tools)
+- [Organisation Tools](#organisation-tools) (20 tools)
 - [Cache Management](#cache-management) (1 tool)
 - [Error Handling](#error-handling)
 
@@ -471,6 +471,7 @@ Schedule an email to bubble up (reappear) at a specific time slot.
 |------|------|----------|---------|-------------|
 | posting_id | string | **Yes** | - | The posting ID to schedule |
 | slot | string | **Yes** | - | When to bubble up (see table below) |
+| date | string | No* | - | Date in YYYY-MM-DD format. *Required when slot is `custom`. |
 
 **Slot Values:**
 | Value | Description | Typical Time |
@@ -480,6 +481,35 @@ Schedule an email to bubble up (reappear) at a specific time slot.
 | `tomorrow` | Tomorrow morning | 08:00 |
 | `weekend` | This weekend | Saturday 08:00 |
 | `next_week` | Next week | Monday 08:00 |
+| `surprise_me` | Random time chosen by Hey | Varies |
+| `custom` | Specific date | Requires `date` parameter |
+
+**Examples:**
+
+Standard bubble-up:
+```json
+{
+  "posting_id": "12345",
+  "slot": "tomorrow"
+}
+```
+
+Surprise me (random time):
+```json
+{
+  "posting_id": "12345",
+  "slot": "surprise_me"
+}
+```
+
+Custom date:
+```json
+{
+  "posting_id": "12345",
+  "slot": "custom",
+  "date": "2026-01-28"
+}
+```
 
 **Returns:**
 ```json
@@ -487,6 +517,35 @@ Schedule an email to bubble up (reappear) at a specific time slot.
   "success": true
 }
 ```
+
+---
+
+### hey_bubble_up_if_no_reply
+
+Schedule an email to bubble up ONLY if there's no reply by a specific date. This is a conditional bubble-up - the email will only reappear if the recipient hasn't replied by the deadline.
+
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| posting_id | string | **Yes** | - | The posting ID to schedule |
+| date | string | **Yes** | - | Deadline date in YYYY-MM-DD format |
+
+**Example:**
+```json
+{
+  "posting_id": "12345",
+  "date": "2026-01-24"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true
+}
+```
+
+> **Use Case**: Use this tool when you want to be reminded about an email only if the conversation goes cold. If the recipient replies before the deadline, the bubble-up is cancelled automatically.
 
 ---
 
@@ -816,7 +875,7 @@ Hey.com uses different ID types for different operations. Always use the correct
 
 | ID Type | Field Name | Used By |
 |---------|------------|---------|
-| **Posting ID** | `postingId` | `hey_bubble_up`, `hey_ignore_thread`, `hey_unignore_thread`, `hey_remove_reply_later`, `hey_read_email` (Paper Trail bundles) |
+| **Posting ID** | `postingId` | `hey_bubble_up`, `hey_bubble_up_if_no_reply`, `hey_ignore_thread`, `hey_unignore_thread`, `hey_remove_reply_later`, `hey_read_email` (Paper Trail bundles) |
 | **Topic ID** | `topicId` | `hey_reply`, `hey_trash`, `hey_restore`, `hey_spam`, `hey_not_spam`, `hey_add_label`, `hey_remove_label`, `hey_add_to_collection`, `hey_remove_from_collection`, `hey_mark_unseen`, `hey_read_email` (threads) |
 | **Entry ID** | `entryId` | `hey_set_aside`, `hey_unset_aside`, `hey_reply_later` |
 | **Clearance ID** | `clearanceId` | `hey_screen_in_by_id` |
