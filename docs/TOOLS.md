@@ -300,7 +300,7 @@ Read the full content of an email by ID.
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| id | string | **Yes** | - | The email ID to read |
+| id | string | **Yes** | - | The email ID to read (usually `postingId` or `topicId`) |
 | format | string | No | "html" | Format: "html" or "text" |
 | force_refresh | boolean | No | false | Bypass cache and fetch fresh data |
 
@@ -321,6 +321,8 @@ Read the full content of an email by ID.
   "_cache": {...}
 }
 ```
+
+> **Paper Trail Bundles**: Some Paper Trail emails (transactional emails from high-volume senders like banks, Wise, Amazon) are grouped into "bundles". These have only a `postingId` (no `topicId`). The tool automatically tries the bundle endpoint when needed.
 
 ---
 
@@ -442,12 +444,14 @@ Move an email to Reply Later.
 
 ### hey_remove_reply_later
 
-Remove an email from Reply Later (move it back to the Imbox or its original location).
+Remove an email from Reply Later (mark as "Done", moving it back to the Imbox).
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| id | string | **Yes** | - | The email ID to remove from Reply Later |
+| posting_id | string | **Yes** | - | The **posting ID** (from `postingId` field in email data) to remove from Reply Later |
+
+> **Important**: This tool requires the `postingId`, NOT the `topicId` or generic `id`. Get this from the `hey_list_reply_later` response.
 
 **Returns:**
 ```json
@@ -804,7 +808,17 @@ All tools return errors in a consistent format:
 - Email bodies may contain HTML
 - Thread IDs (topicId) are needed for replies and can be found in `hey_read_email` response
 - The Screener tools work with email addresses or clearance IDs
-- Posting IDs are used for bubble_up and ignore operations
-- Entry IDs are used for set_aside and reply_later operations
-- Topic IDs are used for trash, restore, spam, label, and collection operations
 - Cache metadata is returned with all read operations to indicate data freshness
+
+### ID Types Reference
+
+Hey.com uses different ID types for different operations. Always use the correct ID type:
+
+| ID Type | Field Name | Used By |
+|---------|------------|---------|
+| **Posting ID** | `postingId` | `hey_bubble_up`, `hey_ignore_thread`, `hey_unignore_thread`, `hey_remove_reply_later`, `hey_read_email` (Paper Trail bundles) |
+| **Topic ID** | `topicId` | `hey_reply`, `hey_trash`, `hey_restore`, `hey_spam`, `hey_not_spam`, `hey_add_label`, `hey_remove_label`, `hey_add_to_collection`, `hey_remove_from_collection`, `hey_mark_unseen`, `hey_read_email` (threads) |
+| **Entry ID** | `entryId` | `hey_set_aside`, `hey_unset_aside`, `hey_reply_later` |
+| **Clearance ID** | `clearanceId` | `hey_screen_in_by_id` |
+
+> **Tip**: When listing emails, the response includes all available ID types. Use the appropriate ID based on the operation you want to perform.

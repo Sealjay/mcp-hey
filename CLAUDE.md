@@ -111,6 +111,7 @@ uv run ruff format .     # Format
 | No bundled Chromium | System webview for auth minimises footprint |
 | Local cookie storage | Never store credentials, only session cookies |
 | Rate limit parsing | Respect `x-ratelimit` headers |
+| **Correctness over backward compatibility** | When fixing bugs or updating APIs, prefer correct behaviour over maintaining broken backward compatibility. Update documentation and require correct parameter types rather than adding workarounds. |
 
 ---
 
@@ -157,6 +158,8 @@ When investigating or fixing Hey.com API issues:
 | 2025-12 | Cookie name changed from `_hey_session` to `session_token` |
 | 2025-01 | Bubble up endpoint: `/postings/bubble_up?posting_ids[]={id}&slot={slot}` |
 | 2025-01 | Compose page URL: `/messages/new` |
+| 2026-01 | Reply Later "Done" action uses `POST /postings/moves?box_id={boxId}` with `posting_ids` form field, NOT `DELETE /entries/{id}/reply_later` |
+| 2026-01 | Paper Trail bundle emails use `/postings/{id}/bundles/unseen` endpoint, not `/postings/{id}` |
 
 ---
 

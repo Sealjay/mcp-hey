@@ -156,6 +156,27 @@ Get a single email posting/entry (primary endpoint for viewing individual emails
 
 **Response:** HTML page with email content
 
+> **Note**: This endpoint works for standard emails. For Paper Trail bundle emails, use `/postings/{id}/bundles/unseen` instead.
+
+---
+
+#### GET /postings/{id}/bundles/unseen
+
+Get a Paper Trail bundle (grouped transactional emails from the same sender).
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | Posting ID |
+
+**Response:** HTML page with bundle content (multiple emails grouped together)
+
+**When to use:** Paper Trail emails from high-volume senders (e.g., Wise, Amazon, banks) are grouped into "bundles". These have:
+- Link format `/postings/{id}/bundles/unseen` in the Paper Trail list
+- No `topicId` (only `postingId`)
+- Page title like "New From [Sender]"
+
+**How to detect:** Check the `href` attribute in Paper Trail listings - if it contains `/bundles/`, use this endpoint.
+
 ---
 
 #### GET /topics/{id}
@@ -389,13 +410,35 @@ Move an email to Reply Later.
 
 ---
 
-#### DELETE /entries/{id}/reply_later
+#### ~~DELETE /entries/{id}/reply_later~~ (DEPRECATED)
 
-Remove an email from Reply Later.
+> **Warning**: This endpoint does NOT work for removing emails from Reply Later. Use `POST /postings/moves` instead.
+
+---
+
+#### POST /postings/moves
+
+Move postings between boxes (used for "Done" action in Reply Later and Set Aside).
 
 | Parameter | Type | Location | Description |
 |-----------|------|----------|-------------|
-| `id` | string | path | Entry ID |
+| `box_id` | string | query | Destination box ID (see values below) |
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `posting_ids` | string | Yes | Comma-separated posting IDs to move |
+
+**Box ID Values:**
+
+| Value | Description |
+|-------|-------------|
+| `2145533` | Imbox/Done (removes from Reply Later or Set Aside) |
+
+> **Note**: The `box_id` value may vary per account. Capture from the form action in the Hey.com UI.
+
+**Example:** `POST /postings/moves?box_id=2145533` with form data `posting_ids=1119492279`
 
 **Response:** 200 OK or redirect
 
@@ -678,6 +721,23 @@ Remove a thread from a collection.
 
 Hey.com uses Hotwire/Turbo for dynamic updates. Email lists are typically contained in:
 
+### Compose Page (`/messages/new`)
+
+The compose page contains the sender selection dropdown, used to determine the user's account ID and email:
+
+```html
+<select name="acting_sender_id" id="acting_sender_id">
+  <option value="12345678" selected>user@example.com</option>
+  <option value="87654321">other@example.com</option>
+</select>
+```
+
+To extract account info:
+- **Sender ID**: Get `value` attribute from the selected `<option>`
+- **Sender Email**: Get text content from the selected `<option>`
+
+> **Note**: Previous versions of Hey.com used separate `<input>` elements for `acting_sender_id` and `acting_sender_email`. The current structure uses a `<select>` dropdown where the email is in the option text.
+
 - `turbo-frame` elements with IDs like `entry_{id}` or `posting_{id}`
 - Elements with `data-entry-id` or `data-posting-id` attributes
 - CSS classes like `.posting`, `.entry`, `.sender`, `.subject`
@@ -755,3 +815,6 @@ When a session expires, requests return a 302 redirect to `/sign_in`. The hey-mc
 | 2025-01 | Documented compose page URL as `/messages/new` |
 | 2026-01 | Documented Reply Later "Focus & Reply" view uses different CSS class (`bulk-actions__container` only, no `posting` class) |
 | 2026-01 | Added view-specific HTML differences table and parsing guidance |
+| 2026-01 | Compose page sender selection changed from `<input>` elements to `<select>` dropdown; email now in option text content |
+| 2026-01 | **BREAKING**: Reply Later "Done" action uses `POST /postings/moves?box_id={boxId}` with `posting_ids` form field, NOT `DELETE /entries/{id}/reply_later` |
+| 2026-01 | Added Paper Trail bundles endpoint: `GET /postings/{id}/bundles/unseen` for grouped transactional emails |
