@@ -48,13 +48,13 @@ describe("Organise Tools", () => {
       expect(result.error).toBe("Email ID is required")
     })
 
-    test("removeFromReplyLater should require email ID", async () => {
+    test("removeFromReplyLater should require posting ID", async () => {
       const { removeFromReplyLater } = await import("../tools/organise")
 
       const result = await removeFromReplyLater("")
 
       expect(result.success).toBe(false)
-      expect(result.error).toBe("Email ID is required")
+      expect(result.error).toBe("Posting ID is required")
     })
 
     test("markAsRead should require email ID", async () => {

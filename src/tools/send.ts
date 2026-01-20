@@ -2,6 +2,15 @@ import { parse as parseHtml } from "node-html-parser"
 import { invalidateForAction } from "../cache"
 import { heyClient } from "../hey-client"
 
+// Debug mode - set via environment variable
+const DEBUG = process.env.HEY_MCP_DEBUG === "true"
+
+function debugLog(message: string, data?: unknown): void {
+  if (DEBUG) {
+    console.error(`[hey-mcp:send] ${message}`, data ?? "")
+  }
+}
+
 interface AccountInfo {
   senderId: string
   senderEmail: string
@@ -34,59 +43,79 @@ async function getAccountInfo(): Promise<AccountInfo> {
     return accountInfoCache.value
   }
 
-  const html = await heyClient.fetchHtml("/imbox")
-  const root = parseHtml(html)
+  debugLog("Fetching compose page for account info")
+  const composeHtml = await heyClient.fetchHtml("/messages/new")
+  const root = parseHtml(composeHtml)
 
-  // Look for account info in the page - typically in a data attribute or form
-  const senderInput = root.querySelector(
-    "[name='acting_sender_id'], [data-sender-id]",
-  )
-  const emailInput = root.querySelector(
-    "[name='acting_sender_email'], [data-sender-email]",
-  )
+  // Primary: Parse select element (current Hey.com structure as of 2025-01)
+  // <select name="acting_sender_id"><option value="123" selected>email@example.com</option></select>
+  const senderSelect = root.querySelector("select[name='acting_sender_id']")
+  if (senderSelect) {
+    const selectedOption =
+      senderSelect.querySelector("option[selected]") ||
+      senderSelect.querySelector("option") // fallback to first option
 
-  // Try to find in compose form or settings link
-  // Note: compose page is at /messages/new (not /compose)
-  const composeLink = root.querySelector(
-    "a[href*='/messages/new'], a[href*='/compose'], [data-compose]",
-  )
-  if (composeLink) {
-    // Fetch compose page for more accurate info
-    const composeHtml = await heyClient.fetchHtml("/messages/new")
-    const composeRoot = parseHtml(composeHtml)
+    if (selectedOption) {
+      const senderId = selectedOption.getAttribute("value")
+      const senderEmail = selectedOption.text.trim()
 
-    const composeSenderId = composeRoot
-      .querySelector("[name='acting_sender_id']")
-      ?.getAttribute("value")
-    const composeSenderEmail = composeRoot
-      .querySelector("[name='acting_sender_email']")
-      ?.getAttribute("value")
-
-    if (composeSenderId && composeSenderEmail) {
-      return { senderId: composeSenderId, senderEmail: composeSenderEmail }
+      if (senderId && senderEmail && isValidEmail(senderEmail)) {
+        debugLog("Extracted account info from select", {
+          senderId,
+          senderEmail,
+        })
+        const accountInfo = { senderId, senderEmail }
+        accountInfoCache.value = accountInfo
+        return accountInfo
+      }
     }
   }
 
-  // Fallback to page-level data attributes
-  const senderId =
-    senderInput?.getAttribute("value") ||
-    senderInput?.getAttribute("data-sender-id") ||
-    root.querySelector("[data-account-id]")?.getAttribute("data-account-id")
+  // Fallback 1: Legacy input elements (older Hey.com HTML structure)
+  const senderIdInput = root.querySelector("[name='acting_sender_id']")
+  const senderEmailInput = root.querySelector("[name='acting_sender_email']")
 
-  const senderEmail =
-    emailInput?.getAttribute("value") ||
-    emailInput?.getAttribute("data-sender-email") ||
-    root
-      .querySelector("[data-account-email]")
-      ?.getAttribute("data-account-email")
+  const legacySenderId = senderIdInput?.getAttribute("value")
+  const legacySenderEmail = senderEmailInput?.getAttribute("value")
 
-  if (!senderId || !senderEmail) {
-    throw new Error("Could not determine Hey.com account information")
+  if (legacySenderId && legacySenderEmail) {
+    debugLog("Extracted account info from legacy inputs", {
+      senderId: legacySenderId,
+      senderEmail: legacySenderEmail,
+    })
+    const accountInfo = {
+      senderId: legacySenderId,
+      senderEmail: legacySenderEmail,
+    }
+    accountInfoCache.value = accountInfo
+    return accountInfo
   }
 
-  const accountInfo = { senderId, senderEmail }
-  accountInfoCache.value = accountInfo
-  return accountInfo
+  // Fallback 2: Data attributes
+  const accountId = root
+    .querySelector("[data-account-id]")
+    ?.getAttribute("data-account-id")
+  const accountEmail = root
+    .querySelector("[data-account-email]")
+    ?.getAttribute("data-account-email")
+
+  if (accountId && accountEmail) {
+    debugLog("Extracted account info from data attributes", {
+      accountId,
+      accountEmail,
+    })
+    const accountInfo = { senderId: accountId, senderEmail: accountEmail }
+    accountInfoCache.value = accountInfo
+    return accountInfo
+  }
+
+  // Debug: Log HTML snippet on failure
+  debugLog(
+    "Failed to extract account info. HTML snippet:",
+    composeHtml.substring(0, 2000),
+  )
+
+  throw new Error("Could not determine Hey.com account information")
 }
 
 export interface SendEmailParams {

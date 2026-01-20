@@ -135,27 +135,63 @@ export async function removeFromSetAside(
   }
 }
 
+/**
+ * Extract the box_id for the "Done" action from the Reply Later page.
+ * The box_id is account-specific and found in the form action URL.
+ */
+async function getReplyLaterBoxId(): Promise<string | null> {
+  const html = await heyClient.fetchHtml("/reply_later")
+  const { parse: parseHtml } = await import("node-html-parser")
+  const root = parseHtml(html)
+
+  // Find the form that contains the "Done" button - it has action like /postings/moves?box_id=XXX
+  const forms = root.querySelectorAll("form[action*='/postings/moves']")
+  for (const form of forms) {
+    const action = form.getAttribute("action")
+    const match = action?.match(/box_id=(\d+)/)
+    if (match) {
+      return match[1]
+    }
+  }
+  return null
+}
+
 export async function removeFromReplyLater(
-  emailId: string,
+  postingId: string,
 ): Promise<OrganiseResult> {
-  if (!emailId) {
-    return { success: false, error: "Email ID is required" }
+  if (!postingId) {
+    return { success: false, error: "Posting ID is required" }
   }
 
   try {
+    // Get the box_id from the Reply Later page (account-specific)
+    const boxId = await getReplyLaterBoxId()
+    if (!boxId) {
+      return {
+        success: false,
+        error:
+          "Could not determine box_id from Reply Later page. The page structure may have changed.",
+      }
+    }
+
     const csrfToken = await heyClient.getCsrfToken()
 
-    const response = await heyClient.delete(
-      `/entries/${emailId}/reply_later`,
+    // Use POST /postings/moves?box_id={boxId} with posting_ids form field
+    const formData = new URLSearchParams()
+    formData.append("posting_ids", postingId)
+
+    const response = await heyClient.post(
+      `/postings/moves?box_id=${boxId}`,
+      formData,
       csrfToken,
     )
 
     if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("reply_later", emailId)
+      invalidateForAction("reply_later", postingId)
       return { success: true }
     }
     if (response.status === 302) {
-      invalidateForAction("reply_later", emailId)
+      invalidateForAction("reply_later", postingId)
       return { success: true }
     }
     return {

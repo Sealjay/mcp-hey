@@ -858,12 +858,14 @@ export async function readEmail(
   } else {
     // For HTML format, try multiple endpoints in order of likelihood
     // Hey.com uses different ID types for different resources:
-    // - topicId: threads (conversations) at /topics/{id}
     // - postingId: individual email entries at /postings/{id}
+    // - postingId (bundles): Paper Trail grouped emails at /postings/{id}/bundles/unseen
+    // - topicId: threads (conversations) at /topics/{id}
     // - entryId: inbox entries at /entries/{id}
     // - messageId: raw messages at /messages/{id}
     const endpoints = [
       `/postings/${id}`,
+      `/postings/${id}/bundles/unseen`, // Paper Trail bundles (grouped transactional emails)
       `/topics/${id}`,
       `/entries/${id}`,
       `/messages/${id}`,

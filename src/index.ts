@@ -615,16 +615,17 @@ const tools: Tool[] = [
   {
     name: "hey_remove_reply_later",
     description:
-      "Remove an email from Reply Later (move it back to the Imbox or its original location)",
+      'Remove an email from Reply Later (mark as "Done", moving it back to the Imbox). Requires the posting_id from hey_list_reply_later.',
     inputSchema: {
       type: "object" as const,
       properties: {
-        id: {
+        posting_id: {
           type: "string",
-          description: "The email ID to remove from Reply Later",
+          description:
+            "The posting ID to remove from Reply Later (use postingId from hey_list_reply_later)",
         },
       },
-      required: ["id"],
+      required: ["posting_id"],
     },
   },
   {
@@ -1179,16 +1180,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break
       }
       case "hey_remove_reply_later": {
-        const id = validateId(args?.id)
-        if (!id) {
+        const postingId = validateId(args?.posting_id)
+        if (!postingId) {
           return {
             content: [
-              { type: "text", text: "Error: id is required and must be valid" },
+              {
+                type: "text",
+                text: "Error: posting_id is required and must be valid (use postingId from hey_list_reply_later)",
+              },
             ],
             isError: true,
           }
         }
-        result = await removeFromReplyLater(id)
+        result = await removeFromReplyLater(postingId)
         break
       }
       case "hey_screen_in": {
