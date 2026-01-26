@@ -228,15 +228,65 @@ export class HeyClient {
     return this.handleResponse(response)
   }
 
-  async fetchHtml(path: string): Promise<string> {
-    const response = await this.fetch(path)
+  async fetchHtml(path: string, maxRedirects = 5): Promise<string> {
+    let currentPath = path
+    let redirectCount = 0
 
-    // Check for HTTP errors (404, 500, etc.)
-    if (!response.ok && response.status !== 302) {
-      throw new Error(`HTTP ${response.status}: Failed to fetch ${path}`)
+    while (redirectCount < maxRedirects) {
+      const response = await this.fetch(currentPath)
+
+      console.error(
+        `[hey-mcp] fetchHtml ${currentPath}: status=${response.status}`,
+      )
+
+      // Handle redirects (301, 302, 303, 307, 308)
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get("location")
+        console.error(`[hey-mcp] Redirect to: ${location}`)
+
+        if (!location) {
+          throw new Error(`Redirect without location header for ${currentPath}`)
+        }
+
+        // Check for auth redirect
+        if (location.includes("/sign_in")) {
+          console.error("[hey-mcp] Session expired (redirect to sign_in)")
+          await this.refreshSession()
+          throw new Error("Session expired, please retry")
+        }
+
+        // Follow the redirect
+        // Handle relative URLs
+        if (location.startsWith("/")) {
+          currentPath = location
+        } else if (location.startsWith("http")) {
+          // Absolute URL - extract path
+          const url = new URL(location)
+          if (url.hostname !== "app.hey.com") {
+            throw new Error(`Unexpected redirect to different host: ${location}`)
+          }
+          currentPath = url.pathname + url.search
+        } else {
+          currentPath = location
+        }
+
+        redirectCount++
+        continue
+      }
+
+      // Check for HTTP errors (404, 500, etc.)
+      if (!response.ok) {
+        const body = await response.text()
+        console.error(
+          `[hey-mcp] HTTP error body (first 500 chars): ${body.slice(0, 500)}`,
+        )
+        throw new Error(`HTTP ${response.status}: Failed to fetch ${path}`)
+      }
+
+      return response.text()
     }
 
-    return response.text()
+    throw new Error(`Too many redirects (${maxRedirects}) for ${path}`)
   }
 
   async getCsrfToken(): Promise<string> {
