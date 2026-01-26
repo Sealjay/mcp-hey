@@ -858,15 +858,17 @@ export async function readEmail(
   } else {
     // For HTML format, try multiple endpoints in order of likelihood
     // Hey.com uses different ID types for different resources:
+    // - topicId: threads (conversations) at /topics/{id} - most common from listings
     // - postingId: individual email entries at /postings/{id}
     // - postingId (bundles): Paper Trail grouped emails at /postings/{id}/bundles/unseen
-    // - topicId: threads (conversations) at /topics/{id}
     // - entryId: inbox entries at /entries/{id}
     // - messageId: raw messages at /messages/{id}
+    // Note: IDs from list operations are typically topicIds, so try /topics first
     const endpoints = [
+      `/topics/${id}`,
+      `/topics/${id}/entries`,
       `/postings/${id}`,
       `/postings/${id}/bundles/unseen`, // Paper Trail bundles (grouped transactional emails)
-      `/topics/${id}`,
       `/entries/${id}`,
       `/messages/${id}`,
     ]
@@ -874,11 +876,13 @@ export async function readEmail(
     let lastError: Error | null = null
     for (const endpoint of endpoints) {
       try {
+        console.error(`[hey-mcp] Trying endpoint: ${endpoint}`)
         content = await heyClient.fetchHtml(endpoint)
+        console.error(`[hey-mcp] Success with endpoint: ${endpoint}`)
         break // Success - exit the loop
       } catch (err) {
         lastError = err as Error
-        console.error(`[hey-mcp] ${endpoint} failed:`, err)
+        console.error(`[hey-mcp] ${endpoint} failed:`, (err as Error).message)
       }
     }
 
