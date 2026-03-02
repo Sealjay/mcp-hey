@@ -612,12 +612,13 @@ const tools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        id: {
+        entry_id: {
           type: "string",
-          description: "The email ID to set aside",
+          description:
+            "The entry ID to set aside (use entryId from list operations)",
         },
       },
-      required: ["id"],
+      required: ["entry_id"],
     },
   },
   {
@@ -626,27 +627,29 @@ const tools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        id: {
+        entry_id: {
           type: "string",
-          description: "The email ID to mark for reply later",
+          description:
+            "The entry ID to mark for reply later (use entryId from list operations)",
         },
       },
-      required: ["id"],
+      required: ["entry_id"],
     },
   },
   {
     name: "hey_unset_aside",
     description:
-      "Remove an email from Set Aside (move it back to the Imbox or its original location)",
+      "Remove an email from Set Aside (move it back to the Imbox or its original location). Requires the posting_id from hey_list_set_aside.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        id: {
+        posting_id: {
           type: "string",
-          description: "The email ID to remove from Set Aside",
+          description:
+            "The posting ID to remove from Set Aside (use postingId from hey_list_set_aside)",
         },
       },
-      required: ["id"],
+      required: ["posting_id"],
     },
   },
   {
@@ -1265,42 +1268,51 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Organisation tools
       case "hey_set_aside": {
-        const id = validateId(args?.id)
-        if (!id) {
+        const entryId = validateId(args?.entry_id)
+        if (!entryId) {
           return {
             content: [
-              { type: "text", text: "Error: id is required and must be valid" },
+              {
+                type: "text",
+                text: "Error: entry_id is required and must be valid (use entryId from list operations)",
+              },
             ],
             isError: true,
           }
         }
-        result = await setAside(id)
+        result = await setAside(entryId)
         break
       }
       case "hey_reply_later": {
-        const id = validateId(args?.id)
-        if (!id) {
+        const entryId = validateId(args?.entry_id)
+        if (!entryId) {
           return {
             content: [
-              { type: "text", text: "Error: id is required and must be valid" },
+              {
+                type: "text",
+                text: "Error: entry_id is required and must be valid (use entryId from list operations)",
+              },
             ],
             isError: true,
           }
         }
-        result = await replyLater(id)
+        result = await replyLater(entryId)
         break
       }
       case "hey_unset_aside": {
-        const id = validateId(args?.id)
-        if (!id) {
+        const postingId = validateId(args?.posting_id)
+        if (!postingId) {
           return {
             content: [
-              { type: "text", text: "Error: id is required and must be valid" },
+              {
+                type: "text",
+                text: "Error: posting_id is required and must be valid (use postingId from hey_list_set_aside)",
+              },
             ],
             isError: true,
           }
         }
-        result = await removeFromSetAside(id)
+        result = await removeFromSetAside(postingId)
         break
       }
       case "hey_remove_reply_later": {

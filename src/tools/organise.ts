@@ -6,9 +6,9 @@ export interface OrganiseResult {
   error?: string
 }
 
-export async function setAside(emailId: string): Promise<OrganiseResult> {
-  if (!emailId) {
-    return { success: false, error: "Email ID is required" }
+export async function setAside(entryId: string): Promise<OrganiseResult> {
+  if (!entryId) {
+    return { success: false, error: "Entry ID is required" }
   }
 
   try {
@@ -16,9 +16,9 @@ export async function setAside(emailId: string): Promise<OrganiseResult> {
 
     // Try multiple endpoints - Hey may use topics or entries
     const endpoints = [
-      `/topics/${emailId}/set_aside`,
-      `/entries/${emailId}/set_aside`,
-      `/topics/${emailId}/status/set_aside`,
+      `/topics/${entryId}/set_aside`,
+      `/entries/${entryId}/set_aside`,
+      `/topics/${entryId}/status/set_aside`,
     ]
 
     let response: Response | null = null
@@ -47,11 +47,11 @@ export async function setAside(emailId: string): Promise<OrganiseResult> {
     }
 
     if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("set_aside", emailId)
+      invalidateForAction("set_aside", entryId)
       return { success: true }
     }
     if (response.status === 302) {
-      invalidateForAction("set_aside", emailId)
+      invalidateForAction("set_aside", entryId)
       return { success: true }
     }
     return {
@@ -66,9 +66,9 @@ export async function setAside(emailId: string): Promise<OrganiseResult> {
   }
 }
 
-export async function replyLater(emailId: string): Promise<OrganiseResult> {
-  if (!emailId) {
-    return { success: false, error: "Email ID is required" }
+export async function replyLater(entryId: string): Promise<OrganiseResult> {
+  if (!entryId) {
+    return { success: false, error: "Entry ID is required" }
   }
 
   try {
@@ -76,8 +76,8 @@ export async function replyLater(emailId: string): Promise<OrganiseResult> {
 
     // Try multiple endpoints - listings return topicId but this endpoint may need entryId
     const endpoints = [
-      `/entries/${emailId}/reply_later`,
-      `/topics/${emailId}/reply_later`,
+      `/entries/${entryId}/reply_later`,
+      `/topics/${entryId}/reply_later`,
     ]
 
     let response: Response | null = null
@@ -100,11 +100,11 @@ export async function replyLater(emailId: string): Promise<OrganiseResult> {
     }
 
     if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("reply_later", emailId)
+      invalidateForAction("reply_later", entryId)
       return { success: true }
     }
     if (response.status === 302) {
-      invalidateForAction("reply_later", emailId)
+      invalidateForAction("reply_later", entryId)
       return { success: true }
     }
     return {
@@ -119,47 +119,63 @@ export async function replyLater(emailId: string): Promise<OrganiseResult> {
   }
 }
 
+/**
+ * Extract the box_id for the "Done" action from the Set Aside page.
+ * The box_id is account-specific and found in the form action URL.
+ */
+async function getSetAsideBoxId(): Promise<string | null> {
+  const html = await heyClient.fetchHtml("/set_aside")
+  const { parse: parseHtml } = await import("node-html-parser")
+  const root = parseHtml(html)
+
+  // Find the form that contains the "Done" button - it has action like /postings/moves?box_id=XXX
+  const forms = root.querySelectorAll("form[action*='/postings/moves']")
+  for (const form of forms) {
+    const action = form.getAttribute("action")
+    const match = action?.match(/box_id=(\d+)/)
+    if (match) {
+      return match[1]
+    }
+  }
+  return null
+}
+
 export async function removeFromSetAside(
-  emailId: string,
+  postingId: string,
 ): Promise<OrganiseResult> {
-  if (!emailId) {
-    return { success: false, error: "Email ID is required" }
+  if (!postingId) {
+    return { success: false, error: "Posting ID is required" }
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    // Try multiple endpoints - listings return topicId but this endpoint may need entryId
-    const endpoints = [
-      `/entries/${emailId}/set_aside`,
-      `/topics/${emailId}/set_aside`,
-    ]
-
-    let response: Response | null = null
-    let lastError: string | null = null
-
-    for (const endpoint of endpoints) {
-      try {
-        response = await heyClient.delete(endpoint, csrfToken)
-        if (response.status >= 200 && response.status < 400) {
-          break
-        }
-        lastError = `${endpoint} returned ${response.status}`
-      } catch (err) {
-        lastError = `${endpoint} failed: ${err instanceof Error ? err.message : "Unknown"}`
+    // Get the box_id from the Set Aside page (account-specific)
+    const boxId = await getSetAsideBoxId()
+    if (!boxId) {
+      return {
+        success: false,
+        error:
+          "Could not determine box_id from Set Aside page. The page structure may have changed.",
       }
     }
 
-    if (!response) {
-      return { success: false, error: lastError || "All endpoints failed" }
-    }
+    const csrfToken = await heyClient.getCsrfToken()
+
+    // Use POST /postings/moves?box_id={boxId} with posting_ids form field
+    const formData = new URLSearchParams()
+    formData.append("posting_ids", postingId)
+
+    const response = await heyClient.post(
+      `/postings/moves?box_id=${boxId}`,
+      formData,
+      csrfToken,
+    )
 
     if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("set_aside", emailId)
+      invalidateForAction("set_aside", postingId)
       return { success: true }
     }
     if (response.status === 302) {
-      invalidateForAction("set_aside", emailId)
+      invalidateForAction("set_aside", postingId)
       return { success: true }
     }
     return {
