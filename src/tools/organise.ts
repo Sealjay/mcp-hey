@@ -665,6 +665,39 @@ export async function bubbleUp(
 }
 
 /**
+ * Pop (dismiss) a bubbled-up email so it sinks back into the Imbox.
+ */
+export async function popBubble(postingId: string): Promise<OrganiseResult> {
+  if (!postingId) {
+    return { success: false, error: "Posting ID is required" }
+  }
+
+  try {
+    const csrfToken = await heyClient.getCsrfToken()
+    const endpoint = `/postings/bubble_up?posting_ids[]=${postingId}`
+    const response = await heyClient.delete(endpoint, csrfToken)
+
+    if (response.status >= 200 && response.status < 300) {
+      invalidateForAction("bubble_up", postingId)
+      return { success: true }
+    }
+    if (response.status === 302) {
+      invalidateForAction("bubble_up", postingId)
+      return { success: true }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+/**
  * Schedule an email to bubble up ONLY if there's no reply by a specific date.
  * This is a conditional bubble-up - the email will only reappear if the
  * recipient hasn't replied by the deadline.
