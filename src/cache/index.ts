@@ -5,6 +5,7 @@
 export {
   closeDatabase,
   getDatabase,
+  resetDatabase,
   runMaintenance,
   unixNow,
 } from "./db"
