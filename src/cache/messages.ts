@@ -149,7 +149,9 @@ export function cacheMessages(folder: string, emails: Email[]): void {
     )
 
     for (const email of emails) {
-      // Check if snippet changed for an email with a cached body
+      // Check if snippet changed for an email with a cached body.
+      // Skip when new snippet is null/empty — a missing snippet is not evidence
+      // of new content, so we conservatively keep the body cache valid.
       const newSnippet = email.snippet || null
       if (newSnippet) {
         const existing = lookupStmt.get(email.id)
@@ -163,10 +165,23 @@ export function cacheMessages(folder: string, emails: Email[]): void {
         }
       }
 
+      // Use UPSERT (not INSERT OR REPLACE) to avoid cascade-deleting message_bodies.
+      // INSERT OR REPLACE deletes then re-inserts, which triggers ON DELETE CASCADE
+      // and destroys any stale-flagged body row before getCachedEmailDetail can see it.
       execute(
-        `INSERT OR REPLACE INTO messages
+        `INSERT INTO messages
          (id, folder, sender_email, sender_name, subject, snippet, received_at, is_read, cached_at, ttl_seconds)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           folder = excluded.folder,
+           sender_email = excluded.sender_email,
+           sender_name = excluded.sender_name,
+           subject = excluded.subject,
+           snippet = excluded.snippet,
+           received_at = excluded.received_at,
+           is_read = excluded.is_read,
+           cached_at = excluded.cached_at,
+           ttl_seconds = excluded.ttl_seconds`,
         [
           email.id,
           folder,
