@@ -26,6 +26,7 @@ import {
   markAsNotSpam,
   markAsSpam,
   markAsUnseen,
+  popBubble,
   removeFromCollection,
   removeFromReplyLater,
   removeFromSetAside,
@@ -57,7 +58,7 @@ import {
   readEmail,
   searchEmails,
 } from "./tools/read"
-import { replyToEmail, sendEmail } from "./tools/send"
+import { forwardEmail, replyToEmail, sendEmail } from "./tools/send"
 
 function sanitiseError(error: unknown): string {
   if (error instanceof Error) {
@@ -569,6 +570,41 @@ const tools: Tool[] = [
     },
   },
 
+  {
+    name: "hey_forward",
+    description: "Forward an email to new recipients",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        entry_id: {
+          type: "string",
+          description: "The entry ID of the email to forward",
+        },
+        to: {
+          type: "array",
+          items: { type: "string" },
+          description: "List of recipient email addresses",
+        },
+        cc: {
+          type: "array",
+          items: { type: "string" },
+          description: "List of CC recipient email addresses",
+        },
+        bcc: {
+          type: "array",
+          items: { type: "string" },
+          description: "List of BCC recipient email addresses",
+        },
+        body: {
+          type: "string",
+          description:
+            "Optional message to include above the forwarded content",
+        },
+      },
+      required: ["entry_id", "to"],
+    },
+  },
+
   // Organisation tools
   {
     name: "hey_set_aside",
@@ -794,6 +830,21 @@ const tools: Tool[] = [
         },
       },
       required: ["posting_id", "date"],
+    },
+  },
+  {
+    name: "hey_pop_bubble",
+    description:
+      "Pop (dismiss) a bubbled-up email so it sinks back into the Imbox. The email is not deleted or archived — it just stops being pinned at the top.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        posting_id: {
+          type: "string",
+          description: "The posting ID to pop/unbubble",
+        },
+      },
+      required: ["posting_id"],
     },
   },
   {
@@ -1173,6 +1224,45 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break
       }
 
+      case "hey_forward": {
+        const entryId = validateId(args?.entry_id)
+        const to = args?.to as string[]
+        const cc = args?.cc as string[] | undefined
+        const bcc = args?.bcc as string[] | undefined
+        const body = args?.body as string | undefined
+
+        if (!entryId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: entry_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        if (!to || !Array.isArray(to) || to.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: to is required and must be a non-empty array of email addresses",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await forwardEmail({
+          entryId,
+          to,
+          cc,
+          bcc,
+          body: body?.trim(),
+        })
+        break
+      }
+
       // Organisation tools
       case "hey_set_aside": {
         const id = validateId(args?.id)
@@ -1406,6 +1496,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
         result = await bubbleUpIfNoReply(postingId, date)
+        break
+      }
+      case "hey_pop_bubble": {
+        const postingId = validateId(args?.posting_id)
+        if (!postingId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: posting_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await popBubble(postingId)
         break
       }
       case "hey_ignore_thread": {
