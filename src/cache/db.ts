@@ -59,8 +59,8 @@ function initializeSchema(database: Database): void {
       console.error("[hey-mcp] FTS5 initialization warning:", err)
     }
 
-    // Migration v2 → v3: add stale column to message_bodies
-    if (currentVersion >= 2 && currentVersion < 3) {
+    // Migration to v3: add stale column to message_bodies
+    if (currentVersion < 3) {
       try {
         database.exec(
           "ALTER TABLE message_bodies ADD COLUMN stale INTEGER NOT NULL DEFAULT 0",
