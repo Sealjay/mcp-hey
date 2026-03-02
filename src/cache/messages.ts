@@ -6,6 +6,7 @@
 import type { Email, EmailDetail } from "../tools/read"
 import {
   execute,
+  getDatabase,
   hashQuery,
   isExpired,
   query,
@@ -136,7 +137,31 @@ export function cacheMessages(folder: string, emails: Email[]): void {
     folder === "imbox" ? TTL_CONFIG.inbox_list : TTL_CONFIG.message_metadata
 
   transaction(() => {
+    // Prepared statements for snippet comparison (reused across all emails)
+    const database = getDatabase()
+    const lookupStmt = database.query<
+      { snippet: string | null; body_cached: number },
+      [string]
+    >("SELECT snippet, body_cached FROM messages WHERE id = ?")
+    const markStaleStmt = database.query<void, [string]>(
+      "UPDATE message_bodies SET stale = 1 WHERE message_id = ?",
+    )
+
     for (const email of emails) {
+      // Check if snippet changed for an email with a cached body
+      const newSnippet = email.snippet || null
+      if (newSnippet) {
+        const existing = lookupStmt.get(email.id)
+        if (
+          existing &&
+          existing.body_cached === 1 &&
+          existing.snippet &&
+          existing.snippet !== newSnippet
+        ) {
+          markStaleStmt.run(email.id)
+        }
+      }
+
       execute(
         `INSERT OR REPLACE INTO messages
          (id, folder, sender_email, sender_name, subject, snippet, received_at, is_read, cached_at, ttl_seconds)
@@ -147,7 +172,7 @@ export function cacheMessages(folder: string, emails: Email[]): void {
           email.fromEmail || null,
           email.from,
           email.subject,
-          email.snippet || null,
+          newSnippet,
           email.date ? Math.floor(new Date(email.date).getTime() / 1000) : null,
           email.unread ? 0 : 1,
           now,
