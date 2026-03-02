@@ -74,11 +74,30 @@ export async function replyLater(emailId: string): Promise<OrganiseResult> {
   try {
     const csrfToken = await heyClient.getCsrfToken()
 
-    const response = await heyClient.put(
+    // Try multiple endpoints - listings return topicId but this endpoint may need entryId
+    const endpoints = [
       `/entries/${emailId}/reply_later`,
-      undefined,
-      csrfToken,
-    )
+      `/topics/${emailId}/reply_later`,
+    ]
+
+    let response: Response | null = null
+    let lastError: string | null = null
+
+    for (const endpoint of endpoints) {
+      try {
+        response = await heyClient.put(endpoint, undefined, csrfToken)
+        if (response.status >= 200 && response.status < 400) {
+          break
+        }
+        lastError = `${endpoint} returned ${response.status}`
+      } catch (err) {
+        lastError = `${endpoint} failed: ${err instanceof Error ? err.message : "Unknown"}`
+      }
+    }
+
+    if (!response) {
+      return { success: false, error: lastError || "All endpoints failed" }
+    }
 
     if (response.status >= 200 && response.status < 300) {
       invalidateForAction("reply_later", emailId)
@@ -110,10 +129,30 @@ export async function removeFromSetAside(
   try {
     const csrfToken = await heyClient.getCsrfToken()
 
-    const response = await heyClient.delete(
+    // Try multiple endpoints - listings return topicId but this endpoint may need entryId
+    const endpoints = [
       `/entries/${emailId}/set_aside`,
-      csrfToken,
-    )
+      `/topics/${emailId}/set_aside`,
+    ]
+
+    let response: Response | null = null
+    let lastError: string | null = null
+
+    for (const endpoint of endpoints) {
+      try {
+        response = await heyClient.delete(endpoint, csrfToken)
+        if (response.status >= 200 && response.status < 400) {
+          break
+        }
+        lastError = `${endpoint} returned ${response.status}`
+      } catch (err) {
+        lastError = `${endpoint} failed: ${err instanceof Error ? err.message : "Unknown"}`
+      }
+    }
+
+    if (!response) {
+      return { success: false, error: lastError || "All endpoints failed" }
+    }
 
     if (response.status >= 200 && response.status < 300) {
       invalidateForAction("set_aside", emailId)

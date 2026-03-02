@@ -11,6 +11,16 @@ function debugLog(message: string, data?: unknown): void {
   }
 }
 
+function safeInvalidateCache(
+  action: Parameters<typeof invalidateForAction>[0],
+): void {
+  try {
+    invalidateForAction(action)
+  } catch (err) {
+    debugLog("Cache invalidation failed (non-fatal)", err)
+  }
+}
+
 interface AccountInfo {
   senderId: string
   senderEmail: string
@@ -197,7 +207,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
       const messageId = location?.match(/\/messages\/(\d+)/)?.[1]
 
       // Invalidate cache after successful send
-      invalidateForAction("send")
+      safeInvalidateCache("send")
 
       return { success: true, messageId }
     }
@@ -207,8 +217,156 @@ export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
       const messageId = location?.match(/\/messages\/(\d+)/)?.[1]
 
       // Invalidate cache after successful send
-      invalidateForAction("send")
+      safeInvalidateCache("send")
 
+      return { success: true, messageId }
+    }
+    return {
+      success: false,
+      error: `Request failed with status ${response.status}`,
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export interface ForwardParams {
+  entryId: string
+  to: string[]
+  cc?: string[]
+  bcc?: string[]
+  body?: string
+}
+
+export async function forwardEmail(params: ForwardParams): Promise<SendResult> {
+  const { entryId, to, cc, bcc, body: extraBody } = params
+
+  if (to.length === 0) {
+    return { success: false, error: "At least one recipient is required" }
+  }
+
+  const invalidTo = findInvalidEmails(to)
+  if (invalidTo.length > 0) {
+    return {
+      success: false,
+      error: `Invalid recipient email(s): ${invalidTo.join(", ")}`,
+    }
+  }
+
+  if (cc && cc.length > 0) {
+    const invalidCc = findInvalidEmails(cc)
+    if (invalidCc.length > 0) {
+      return {
+        success: false,
+        error: `Invalid CC email(s): ${invalidCc.join(", ")}`,
+      }
+    }
+  }
+
+  if (bcc && bcc.length > 0) {
+    const invalidBcc = findInvalidEmails(bcc)
+    if (invalidBcc.length > 0) {
+      return {
+        success: false,
+        error: `Invalid BCC email(s): ${invalidBcc.join(", ")}`,
+      }
+    }
+  }
+
+  try {
+    // Fetch the forward page to get pre-populated subject and body
+    // Try multiple endpoints - listings return topicId but forward may need entryId
+    const forwardEndpoints = [
+      `/entries/${entryId}/forwards/new`,
+      `/topics/${entryId}/forwards/new`,
+    ]
+
+    let forwardHtml = ""
+    let forwardLastError: Error | null = null
+
+    for (const endpoint of forwardEndpoints) {
+      try {
+        debugLog(`Fetching forward page: ${endpoint}`)
+        forwardHtml = await heyClient.fetchHtml(endpoint)
+        debugLog(`Success with endpoint: ${endpoint}`)
+        break
+      } catch (err) {
+        forwardLastError = err as Error
+        debugLog(`${endpoint} failed:`, (err as Error).message)
+      }
+    }
+
+    if (!forwardHtml && forwardLastError) {
+      throw forwardLastError
+    }
+
+    const root = parseHtml(forwardHtml)
+
+    // Extract pre-populated subject
+    const subjectInput = root.querySelector("input[name='message[subject]']")
+    const subject =
+      subjectInput?.getAttribute("value") || `Fwd: (entry ${entryId})`
+
+    // Extract pre-populated forwarded content from the hidden field
+    const contentInput =
+      root.querySelector("input[name='message[content]']") ||
+      root.querySelector("textarea[name='message[content]']")
+    const forwardedContent =
+      contentInput?.getAttribute("value") || contentInput?.text || ""
+
+    // Combine user body with forwarded content
+    const fullBody = extraBody
+      ? `${extraBody}<br><br>${forwardedContent}`
+      : forwardedContent
+
+    if (!fullBody.trim()) {
+      return {
+        success: false,
+        error: "Could not extract forwarded message content",
+      }
+    }
+
+    const accountInfo = await getAccountInfo()
+    const csrfToken = await heyClient.getCsrfToken()
+
+    const formData = new URLSearchParams()
+    formData.append("acting_sender_id", accountInfo.senderId)
+
+    for (const recipient of to) {
+      formData.append("entry[addressed][directly][]", recipient.trim())
+    }
+
+    if (cc && cc.length > 0) {
+      for (const ccRecipient of cc) {
+        formData.append("entry[addressed][copied][]", ccRecipient.trim())
+      }
+    }
+
+    if (bcc && bcc.length > 0) {
+      for (const bccRecipient of bcc) {
+        formData.append("entry[addressed][blindcopied][]", bccRecipient.trim())
+      }
+    }
+
+    formData.append("message[subject]", subject)
+    formData.append("message[content]", fullBody)
+
+    debugLog("Forwarding email", { entryId, to, subject })
+    const response = await heyClient.post("/messages", formData, csrfToken)
+
+    if (response.status >= 200 && response.status < 300) {
+      const location = response.headers.get("location")
+      const messageId = location?.match(/\/messages\/(\d+)/)?.[1]
+      safeInvalidateCache("forward")
+      return { success: true, messageId }
+    }
+    if (response.status === 302) {
+      const location = response.headers.get("location")
+      const messageId = location?.match(/\/messages\/(\d+)/)?.[1]
+      safeInvalidateCache("forward")
       return { success: true, messageId }
     }
     return {
@@ -253,13 +411,13 @@ export async function replyToEmail(params: ReplyParams): Promise<SendResult> {
 
     if (response.status >= 200 && response.status < 300) {
       // Invalidate cache after successful reply
-      invalidateForAction("reply")
+      safeInvalidateCache("reply")
 
       return { success: true }
     }
     if (response.status === 302) {
       // Invalidate cache after successful reply
-      invalidateForAction("reply")
+      safeInvalidateCache("reply")
 
       return { success: true }
     }
