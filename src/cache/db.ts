@@ -4,7 +4,7 @@
  */
 
 import { Database } from "bun:sqlite"
-import { existsSync, mkdirSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { FTS_SCHEMA, INIT_SCHEMA, SCHEMA_VERSION } from "./schema"
@@ -15,20 +15,86 @@ const DB_PATH = join(DATA_DIR, "hey-cache.db")
 
 let db: Database | null = null
 
+/**
+ * Check if an error is a SQLite disk I/O error.
+ */
+function isDiskError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.includes("disk I/O error") ||
+      error.message.includes("database disk image is malformed") ||
+      error.message.includes("SQLITE_CORRUPT") ||
+      error.message.includes("SQLITE_IOERR"))
+  )
+}
+
+/**
+ * Close and discard the current database connection.
+ * Removes WAL/SHM files to clear any corrupted journaling state.
+ */
+export function resetDatabase(): void {
+  if (db) {
+    try {
+      db.close()
+    } catch {
+      // Connection may already be unusable — ignore close errors
+    }
+    db = null
+  }
+
+  // Remove WAL/SHM files that may hold corrupted state
+  for (const suffix of ["-wal", "-shm"]) {
+    try {
+      rmSync(`${DB_PATH}${suffix}`, { force: true })
+    } catch {
+      // Best-effort cleanup
+    }
+  }
+}
+
 export function getDatabase(): Database {
-  if (db) return db
+  if (db) {
+    // Health check: verify the connection is still usable
+    try {
+      db.query("SELECT 1").get()
+      return db
+    } catch (error) {
+      if (isDiskError(error)) {
+        console.error("[hey-mcp] Database connection unhealthy, resetting...")
+        resetDatabase()
+      } else {
+        throw error
+      }
+    }
+  }
 
   // Ensure data directory exists
   if (!existsSync(DATA_DIR)) {
     mkdirSync(DATA_DIR, { recursive: true })
   }
 
-  db = new Database(DB_PATH, { create: true })
-
-  // Initialize schema
-  initializeSchema(db)
-
-  return db
+  try {
+    db = new Database(DB_PATH, { create: true })
+    initializeSchema(db)
+    return db
+  } catch (error) {
+    if (isDiskError(error)) {
+      // Database file is corrupted — delete and recreate
+      console.error("[hey-mcp] Database corrupted, recreating from scratch...")
+      db = null
+      try {
+        rmSync(DB_PATH, { force: true })
+        rmSync(`${DB_PATH}-wal`, { force: true })
+        rmSync(`${DB_PATH}-shm`, { force: true })
+      } catch {
+        // Best-effort cleanup
+      }
+      db = new Database(DB_PATH, { create: true })
+      initializeSchema(db)
+      return db
+    }
+    throw error
+  }
 }
 
 function initializeSchema(database: Database): void {
@@ -65,14 +131,15 @@ function initializeSchema(database: Database): void {
         database.exec(
           "ALTER TABLE message_bodies ADD COLUMN stale INTEGER NOT NULL DEFAULT 0",
         )
-        console.error("[hey-mcp] Migrated v2 → v3: added stale column to message_bodies")
+        console.error(
+          "[hey-mcp] Migrated v2 → v3: added stale column to message_bodies",
+        )
       } catch (err) {
         // Column already exists (idempotent) — safe to ignore
-        if (
-          err instanceof Error &&
-          err.message.includes("duplicate column")
-        ) {
-          console.error("[hey-mcp] Migration v2 → v3: stale column already exists, skipping")
+        if (err instanceof Error && err.message.includes("duplicate column")) {
+          console.error(
+            "[hey-mcp] Migration v2 → v3: stale column already exists, skipping",
+          )
         } else {
           throw err
         }
@@ -92,10 +159,36 @@ function initializeSchema(database: Database): void {
 
 export function closeDatabase(): void {
   if (db) {
-    // Run optimization before closing
-    db.exec("PRAGMA optimize")
-    db.close()
+    try {
+      db.exec("PRAGMA optimize")
+    } catch {
+      // Best-effort optimization
+    }
+    try {
+      db.close()
+    } catch {
+      // Ignore close errors during shutdown
+    }
     db = null
+  }
+}
+
+/**
+ * Execute a function with automatic retry on disk I/O errors.
+ * Resets the database connection on first failure and retries once.
+ */
+function withRetry<T>(fn: () => T): T {
+  try {
+    return fn()
+  } catch (error) {
+    if (isDiskError(error)) {
+      console.error(
+        "[hey-mcp] Disk I/O error, resetting database and retrying...",
+      )
+      resetDatabase()
+      return fn()
+    }
+    throw error
   }
 }
 
@@ -103,39 +196,47 @@ export function closeDatabase(): void {
  * Execute a query with automatic database connection.
  */
 export function query<T>(sql: string, params?: unknown[]): T[] {
-  const database = getDatabase()
-  const stmt = database.query(sql)
-  return (params ? stmt.all(...params) : stmt.all()) as T[]
+  return withRetry(() => {
+    const database = getDatabase()
+    const stmt = database.query(sql)
+    return (params ? stmt.all(...params) : stmt.all()) as T[]
+  })
 }
 
 /**
  * Execute a single-row query.
  */
 export function queryOne<T>(sql: string, params?: unknown[]): T | null {
-  const database = getDatabase()
-  const stmt = database.query(sql)
-  return (params ? stmt.get(...params) : stmt.get()) as T | null
+  return withRetry(() => {
+    const database = getDatabase()
+    const stmt = database.query(sql)
+    return (params ? stmt.get(...params) : stmt.get()) as T | null
+  })
 }
 
 /**
  * Execute a write operation.
  */
 export function execute(sql: string, params?: unknown[]): void {
-  const database = getDatabase()
-  const stmt = database.query(sql)
-  if (params) {
-    stmt.run(...params)
-  } else {
-    stmt.run()
-  }
+  withRetry(() => {
+    const database = getDatabase()
+    const stmt = database.query(sql)
+    if (params) {
+      stmt.run(...params)
+    } else {
+      stmt.run()
+    }
+  })
 }
 
 /**
  * Execute multiple statements in a transaction.
  */
 export function transaction<T>(fn: () => T): T {
-  const database = getDatabase()
-  return database.transaction(fn)()
+  return withRetry(() => {
+    const database = getDatabase()
+    return database.transaction(fn)()
+  })
 }
 
 /**
@@ -237,6 +338,9 @@ export function runMaintenance(): void {
      )`,
     )
     .run(CACHE_LIMITS.maxSearchResults)
+
+  // Checkpoint WAL to prevent unbounded growth
+  database.exec("PRAGMA wal_checkpoint(PASSIVE)")
 
   // Incremental vacuum
   database.exec("PRAGMA incremental_vacuum(100)")
