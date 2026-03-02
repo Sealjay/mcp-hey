@@ -48,6 +48,7 @@ interface CachedBody {
   body_text: string | null
   body_html: string | null
   cached_at: number
+  stale: number
 }
 
 /**
@@ -210,8 +211,8 @@ export function getCachedEmailDetail(
     [id],
   )
 
-  // Body must be cached for a complete result
-  if (!body) {
+  // Body must be cached and not stale for a complete result
+  if (!body || body.stale === 1) {
     return null
   }
 
@@ -262,10 +263,10 @@ export function cacheEmailDetail(email: EmailDetail): void {
       ],
     )
 
-    // Cache body separately
+    // Cache body separately (explicitly reset stale flag on fresh data)
     execute(
-      `INSERT OR REPLACE INTO message_bodies (message_id, body_html, body_text, cached_at)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO message_bodies (message_id, body_html, body_text, cached_at, stale)
+       VALUES (?, ?, ?, ?, 0)`,
       [
         email.id,
         email.body,
