@@ -93,10 +93,22 @@ function extractEmailsFromHtml(html: string): Email[] {
         .getAttribute("data-identifier")
         ?.replace(/^(posting_|entry_)/, "")
 
-      // 2. Entry ID from data-entry-id attribute
-      const entryId = entry
+      // 2. Entry ID from data-entry-id attribute (primary)
+      let entryId = entry
         .getAttribute("data-entry-id")
         ?.replace(/^entry_/, "")
+
+      // 2b. Fallback: extract entryId from #__entry_{id} URL fragments in links
+      if (!entryId) {
+        const entryLink = entry.querySelector("a[href*='#__entry_']")
+        if (entryLink) {
+          const href = entryLink.getAttribute("href") || ""
+          const entryMatch = href.match(/#__entry_(\d+)/)
+          if (entryMatch) {
+            entryId = entryMatch[1]
+          }
+        }
+      }
 
       // 3. Topic ID from href links within the article
       let topicId: string | undefined
