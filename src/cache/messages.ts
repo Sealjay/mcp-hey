@@ -260,11 +260,21 @@ export function cacheEmailDetail(email: EmailDetail): void {
   const now = unixNow()
 
   transaction(() => {
-    // Update or insert message metadata
+    // Use UPSERT to avoid cascade-deleting message_bodies row
     execute(
-      `INSERT OR REPLACE INTO messages
+      `INSERT INTO messages
        (id, thread_id, folder, sender_email, sender_name, subject, received_at, body_cached, cached_at, ttl_seconds)
-       VALUES (?, ?, COALESCE((SELECT folder FROM messages WHERE id = ?), 'unknown'), ?, ?, ?, ?, 1, ?, ?)`,
+       VALUES (?, ?, COALESCE((SELECT folder FROM messages WHERE id = ?), 'unknown'), ?, ?, ?, ?, 1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         thread_id = excluded.thread_id,
+         folder = excluded.folder,
+         sender_email = excluded.sender_email,
+         sender_name = excluded.sender_name,
+         subject = excluded.subject,
+         received_at = excluded.received_at,
+         body_cached = excluded.body_cached,
+         cached_at = excluded.cached_at,
+         ttl_seconds = excluded.ttl_seconds`,
       [
         email.id,
         email.threadId || null,
