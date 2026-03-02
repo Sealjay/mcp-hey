@@ -3,7 +3,7 @@
  * Separates lightweight metadata from full content for fast queries.
  */
 
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 export const INIT_SCHEMA = `
 -- Pragma settings for optimal caching performance
@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS message_bodies (
     body_html TEXT,
     raw_headers TEXT,
     cached_at INTEGER NOT NULL,
+    stale INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
 );
 

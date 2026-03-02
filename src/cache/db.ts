@@ -49,7 +49,7 @@ function initializeSchema(database: Database): void {
   if (currentVersion < SCHEMA_VERSION) {
     console.error(`[hey-mcp] Initializing cache schema v${SCHEMA_VERSION}...`)
 
-    // Run schema initialization
+    // Run schema initialization (handles fresh installs via CREATE TABLE IF NOT EXISTS)
     database.exec(INIT_SCHEMA)
 
     // Initialize FTS (separate to handle potential errors gracefully)
@@ -57,6 +57,26 @@ function initializeSchema(database: Database): void {
       database.exec(FTS_SCHEMA)
     } catch (err) {
       console.error("[hey-mcp] FTS5 initialization warning:", err)
+    }
+
+    // Migration v2 → v3: add stale column to message_bodies
+    if (currentVersion >= 2 && currentVersion < 3) {
+      try {
+        database.exec(
+          "ALTER TABLE message_bodies ADD COLUMN stale INTEGER NOT NULL DEFAULT 0",
+        )
+        console.error("[hey-mcp] Migrated v2 → v3: added stale column to message_bodies")
+      } catch (err) {
+        // Column already exists (idempotent) — safe to ignore
+        if (
+          err instanceof Error &&
+          err.message.includes("duplicate column")
+        ) {
+          console.error("[hey-mcp] Migration v2 → v3: stale column already exists, skipping")
+        } else {
+          throw err
+        }
+      }
     }
 
     // Update version
