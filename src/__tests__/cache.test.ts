@@ -1,16 +1,18 @@
 import { Database } from "bun:sqlite"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { existsSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-// Test database path
-const TEST_DB_PATH = join(import.meta.dir, "test-cache.db")
+// Test database path - use OS temp directory for reliable write access
+const TEST_DB_DIR = join(tmpdir(), "hey-mcp-test")
+const TEST_DB_PATH = join(TEST_DB_DIR, "test-cache.db")
 
 describe("Cache Schema", () => {
   let db: Database
 
   beforeEach(() => {
-    // Clean up any existing test database
+    mkdirSync(TEST_DB_DIR, { recursive: true })
     if (existsSync(TEST_DB_PATH)) {
       rmSync(TEST_DB_PATH)
     }
@@ -260,6 +262,7 @@ describe("Folder HTML Cache", () => {
   let db: Database
 
   beforeEach(() => {
+    mkdirSync(TEST_DB_DIR, { recursive: true })
     if (existsSync(TEST_DB_PATH)) {
       rmSync(TEST_DB_PATH)
     }

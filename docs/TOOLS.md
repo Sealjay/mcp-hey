@@ -2,7 +2,7 @@
 
 This document provides detailed documentation for all MCP tools provided by hey-mcp.
 
-**Total Tools: 39**
+**Total Tools: 40**
 
 ---
 
@@ -10,7 +10,7 @@ This document provides detailed documentation for all MCP tools provided by hey-
 
 - [Reading Tools](#reading-tools) (15 tools)
 - [Search Tool](#search-tool) (1 tool)
-- [Sending Tools](#sending-tools) (2 tools)
+- [Sending Tools](#sending-tools) (3 tools)
 - [Organisation Tools](#organisation-tools) (20 tools)
 - [Cache Management](#cache-management) (1 tool)
 - [Error Handling](#error-handling)
@@ -339,7 +339,30 @@ Search emails by query. Uses local FTS cache first for speed, then network for f
 | limit | number | No | 25 | Maximum number of results (1-100) |
 | force_refresh | boolean | No | false | Bypass cache and search via network |
 
-**Returns:** Same structure as `hey_list_imbox`
+**Returns:**
+```json
+{
+  "data": [
+    {
+      "id": "1946922438",
+      "topicId": "1946922438",
+      "entryId": "2069500066",
+      "from": "John Doe",
+      "subject": "Meeting tomorrow",
+      "date": "2024-01-15T10:30:00Z"
+    }
+  ],
+  "_cache": {
+    "source": "network",
+    "cached_at": "2024-01-15T10:00:00Z",
+    "age_seconds": 0,
+    "is_stale": false,
+    "hint": "Fresh data from Hey.com"
+  }
+}
+```
+
+> **Note**: Network search results include `topicId`, `entryId`, subject, sender name, and date. Unlike folder listings, network search results do not include `postingId`, `fromEmail`, `snippet`, `unread`, or `bubbledUp` fields (Hey.com's search page uses a compact result format). FTS cache results may include additional fields if the emails were previously cached from folder listings.
 
 ---
 
@@ -365,6 +388,8 @@ Send a new email.
 }
 ```
 
+> **Implementation**: Uses `POST /messages` with browser form headers to submit the email directly.
+
 ---
 
 ### hey_reply
@@ -383,6 +408,33 @@ Reply to an email thread.
   "success": true
 }
 ```
+
+> **Implementation**: Two-step process -- creates a draft via `POST /entries/{id}/replies`, then sends via `PATCH /messages/{draftId}` with Turbo Stream headers and `_method=patch`.
+
+---
+
+### hey_forward
+
+Forward an email to new recipients.
+
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| entry_id | string | **Yes** | - | The entry ID of the email to forward |
+| to | string[] | **Yes** | - | List of recipient email addresses |
+| cc | string[] | No | - | List of CC recipient email addresses |
+| bcc | string[] | No | - | List of BCC recipient email addresses |
+| body | string | No | - | Optional message to prepend before forwarded content |
+
+**Returns:**
+```json
+{
+  "success": true,
+  "messageId": "12345"
+}
+```
+
+> **Implementation**: Uses `POST /messages` with browser form headers. Fetches the original email's subject and body from the forward page, prepending any optional `body` text. Uses `entryId` (try `topicId` as fallback).
 
 ---
 

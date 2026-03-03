@@ -94,9 +94,7 @@ function extractEmailsFromHtml(html: string): Email[] {
         ?.replace(/^(posting_|entry_)/, "")
 
       // 2. Entry ID from data-entry-id attribute (primary)
-      let entryId = entry
-        .getAttribute("data-entry-id")
-        ?.replace(/^entry_/, "")
+      let entryId = entry.getAttribute("data-entry-id")?.replace(/^entry_/, "")
 
       // 2b. Fallback: extract entryId from #__entry_{id} URL fragments in links
       if (!entryId) {
@@ -914,6 +912,68 @@ export async function readEmail(
   }
 }
 
+/**
+ * Parse search results from Hey.com /search page HTML.
+ * Search results use a different structure from folder listings:
+ *   a.action-group__action--envelope[href="/topics/{topicId}#__entry_{entryId}"]
+ *     span.u-min-width
+ *       span.txt--ellipsis  → subject
+ *       small.txt--subtle   → sender name
+ *     time[datetime]         → ISO date
+ */
+function extractSearchResultsFromHtml(html: string): Email[] {
+  try {
+    const root = parseHtml(html)
+    const emails: Email[] = []
+
+    const items = root.querySelectorAll(
+      "a.action-group__action--envelope",
+    )
+
+    for (const item of items) {
+      const href = item.getAttribute("href") || ""
+
+      // Extract topicId and entryId from href like /topics/1946922438#__entry_2069500066
+      const topicMatch = href.match(/\/topics\/(\d+)/)
+      const entryMatch = href.match(/#__entry_(\d+)/)
+      const topicId = topicMatch?.[1]
+      const entryId = entryMatch?.[1]
+
+      const id = topicId || entryId
+      if (!id) continue
+
+      // Subject from first span child inside span.u-min-width
+      const subjectEl = item.querySelector(
+        "span.u-min-width > span",
+      )
+      const subject = subjectEl?.text?.trim() || "(No subject)"
+
+      // Sender from small element
+      const senderEl = item.querySelector(
+        "span.u-min-width > small",
+      )
+      const from = senderEl?.text?.trim() || "Unknown"
+
+      // Date from time element
+      const timeEl = item.querySelector("time")
+      const date = timeEl?.getAttribute("datetime") || undefined
+
+      emails.push({
+        id,
+        topicId,
+        entryId,
+        from,
+        subject,
+        date,
+      })
+    }
+
+    return emails
+  } catch {
+    return []
+  }
+}
+
 export async function searchEmails(
   query: string,
   options: SearchOptions = {},
@@ -943,7 +1003,7 @@ export async function searchEmails(
   // Fetch from network
   const encodedQuery = encodeURIComponent(query)
   const html = await heyClient.fetchHtml(`/search?q=${encodedQuery}`)
-  const emails = extractEmailsFromHtml(html).slice(0, limit)
+  const emails = extractSearchResultsFromHtml(html).slice(0, limit)
 
   // Update cache
   cacheSearchResults(query, emails)

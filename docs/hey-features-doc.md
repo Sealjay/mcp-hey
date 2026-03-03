@@ -41,7 +41,7 @@ This document tracks all Hey.com features discovered through UI exploration and 
 |---------|-------------|--------------|----------|--------|
 | Send New Email | + Write button | `POST /entries` | `hey_send_email` | **Implemented** |
 | Reply to Thread | Reply Now button | `POST /topics/{id}/messages` | `hey_reply` | **Implemented** |
-| Forward Email | More > Forward | TBD | `hey_forward` | MISSING |
+| Forward Email | More > Forward | `GET /entries/{id}/forwards/new` + `POST /messages` | `hey_forward` | **Implemented** |
 | Save Draft | Save draft button | TBD | `hey_save_draft` | MISSING |
 | Delete Draft | Trash icon in compose | TBD | `hey_delete_draft` | MISSING |
 | Schedule Send | Send > Later at scheduled time | TBD | `hey_schedule_send` | MISSING |
@@ -143,7 +143,7 @@ This document tracks all Hey.com features discovered through UI exploration and 
 
 ## Complete MCP Tool List
 
-All 35 implemented MCP tools:
+All 39 implemented MCP tools:
 
 ### Reading Tools (15 tools)
 1. `hey_list_imbox` - List emails in the Imbox
@@ -165,33 +165,34 @@ All 35 implemented MCP tools:
 ### Search Tool (1 tool)
 16. `hey_search` - Search emails by query
 
-### Sending Tools (2 tools)
+### Sending Tools (3 tools)
 17. `hey_send_email` - Send a new email
 18. `hey_reply` - Reply to an email thread
+19. `hey_forward` - Forward an email to new recipients
 
 ### Organisation Tools (16 tools)
-19. `hey_set_aside` - Move email to Set Aside
-20. `hey_unset_aside` - Remove email from Set Aside
-21. `hey_reply_later` - Move email to Reply Later
-22. `hey_remove_reply_later` - Remove email from Reply Later
-23. `hey_bubble_up` - Schedule email to bubble up
-24. `hey_mark_unseen` - Mark thread as unseen
-25. `hey_trash` - Move thread to Trash
-26. `hey_restore` - Restore thread from Trash
-27. `hey_spam` - Mark thread as Spam
-28. `hey_not_spam` - Mark thread as Not Spam
-29. `hey_ignore_thread` - Ignore/mute a thread
-30. `hey_unignore_thread` - Unignore/unmute a thread
-31. `hey_screen_in` - Approve sender (by email)
-32. `hey_screen_in_by_id` - Approve sender (by clearance ID)
-33. `hey_screen_out` - Reject sender
-34. `hey_add_label` - Add label to thread
-35. `hey_remove_label` - Remove label from thread
-36. `hey_add_to_collection` - Add thread to collection
-37. `hey_remove_from_collection` - Remove thread from collection
+20. `hey_set_aside` - Move email to Set Aside
+21. `hey_unset_aside` - Remove email from Set Aside
+22. `hey_reply_later` - Move email to Reply Later
+23. `hey_remove_reply_later` - Remove email from Reply Later
+24. `hey_bubble_up` - Schedule email to bubble up
+25. `hey_mark_unseen` - Mark thread as unseen
+26. `hey_trash` - Move thread to Trash
+27. `hey_restore` - Restore thread from Trash
+28. `hey_spam` - Mark thread as Spam
+29. `hey_not_spam` - Mark thread as Not Spam
+30. `hey_ignore_thread` - Ignore/mute a thread
+31. `hey_unignore_thread` - Unignore/unmute a thread
+32. `hey_screen_in` - Approve sender (by email)
+33. `hey_screen_in_by_id` - Approve sender (by clearance ID)
+34. `hey_screen_out` - Reject sender
+35. `hey_add_label` - Add label to thread
+36. `hey_remove_label` - Remove label from thread
+37. `hey_add_to_collection` - Add thread to collection
+38. `hey_remove_from_collection` - Remove thread from collection
 
 ### Cache Management (1 tool)
-38. `hey_cache_status` - Check cache freshness and statistics
+39. `hey_cache_status` - Check cache freshness and statistics
 
 ---
 
@@ -237,8 +238,7 @@ When screening in a sender, you can optionally specify which view their emails s
 
 ### High Priority
 1. `hey_list_sent` - List sent emails
-2. `hey_forward` - Forward an email
-3. `hey_save_draft` / `hey_delete_draft` - Draft management
+2. `hey_save_draft` / `hey_delete_draft` - Draft management
 
 ### Medium Priority
 4. `hey_list_previously_seen` - View previously seen emails

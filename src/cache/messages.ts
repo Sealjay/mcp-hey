@@ -413,6 +413,7 @@ export function invalidateForAction(
     | "reply_later"
     | "send"
     | "reply"
+    | "forward"
     | "trash"
     | "restore"
     | "spam"
@@ -447,6 +448,7 @@ export function invalidateForAction(
 
     case "send":
     case "reply":
+    case "forward":
       // Invalidate sent folder and potentially thread cache
       execute(
         "UPDATE sync_state SET requires_full_sync = 1 WHERE folder IN ('sent', 'imbox')",

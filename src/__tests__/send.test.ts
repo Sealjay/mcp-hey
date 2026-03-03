@@ -1,4 +1,65 @@
 import { describe, expect, test } from "bun:test"
+import { classifyRedirect } from "../tools/send"
+
+function mockResponse(status: number, location?: string): Response {
+  const headers = new Headers()
+  if (location) {
+    headers.set("location", location)
+  }
+  return new Response(null, { status, headers })
+}
+
+describe("classifyRedirect", () => {
+  test("should detect auth failure from /sign_in redirect", () => {
+    const result = classifyRedirect(mockResponse(302, "/sign_in"))
+    expect(result.type).toBe("auth_failure")
+  })
+
+  test("should extract messageId from /messages/{id} redirect", () => {
+    const result = classifyRedirect(mockResponse(302, "/messages/12345"))
+    expect(result.type).toBe("success")
+    expect(result.messageId).toBe("12345")
+  })
+
+  test("should extract messageId from /topics/{id} redirect", () => {
+    const result = classifyRedirect(mockResponse(302, "/topics/67890"))
+    expect(result.type).toBe("success")
+    expect(result.messageId).toBe("67890")
+  })
+
+  test("should detect success from /imbox redirect", () => {
+    const result = classifyRedirect(mockResponse(302, "/imbox"))
+    expect(result.type).toBe("success")
+    expect(result.messageId).toBeUndefined()
+  })
+
+  test("should detect success from /sent redirect", () => {
+    const result = classifyRedirect(mockResponse(302, "/sent"))
+    expect(result.type).toBe("success")
+  })
+
+  test("should detect validation error from /messages/new redirect", () => {
+    const result = classifyRedirect(mockResponse(302, "/messages/new"))
+    expect(result.type).toBe("validation_error")
+  })
+
+  test("should detect validation error from /entries/new redirect", () => {
+    const result = classifyRedirect(mockResponse(302, "/entries/new"))
+    expect(result.type).toBe("validation_error")
+  })
+
+  test("should treat unknown redirect as success with warning", () => {
+    const result = classifyRedirect(mockResponse(302, "/some/unknown/path"))
+    expect(result.type).toBe("success")
+    expect(result.warning).toContain("/some/unknown/path")
+  })
+
+  test("should handle missing location header", () => {
+    const result = classifyRedirect(mockResponse(302))
+    expect(result.type).toBe("success")
+    expect(result.warning).toBeDefined()
+  })
+})
 
 describe("Send Tools", () => {
   describe("SendEmailParams Validation", () => {

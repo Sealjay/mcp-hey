@@ -305,13 +305,33 @@ List draft emails.
 
 #### GET /search
 
-Quick search endpoint (used for autocomplete). Returns basic search results.
+Search endpoint. Returns server-rendered search results.
 
 | Parameter | Type | Location | Description |
 |-----------|------|----------|-------------|
 | `q` | string | query | Search query string |
 
-**Response:** HTML page with search results
+**Response:** HTML page with search results in a different structure from folder listings:
+
+```html
+<turbo-frame id="quick_search_results">
+  <section class="search__results-group">
+    <div class="action-group action-group--list">
+      <div class="action-group__item">
+        <a class="action-group__action--envelope" href="/topics/{topicId}#__entry_{entryId}">
+          <span class="u-min-width">
+            <span class="txt--ellipsis">{subject}</span>
+            <small class="txt--subtle">{sender name}</small>
+          </span>
+          <time datetime="{ISO date}">{display time}</time>
+        </a>
+      </div>
+    </div>
+  </section>
+</turbo-frame>
+```
+
+> **Important**: Search results use `a.action-group__action--envelope` elements, NOT `article.posting`. This requires a dedicated parser separate from the folder listing parser. Contact results use `a.action-group__action--contacts`.
 
 ---
 
@@ -333,9 +353,11 @@ Full search page with filtering options (From, To, Subject, Date range, Label).
 
 ### Sending Emails
 
-#### POST /entries
+#### POST /messages
 
 Send a new email.
+
+> **Important**: This endpoint requires browser form headers (`Sec-Fetch-Dest: document`, `Sec-Fetch-User: ?1`, `Origin`, `Referer`), not Ajax headers (`X-Requested-With: XMLHttpRequest`). Using Ajax headers returns 404.
 
 **Content-Type:** `application/x-www-form-urlencoded`
 
@@ -348,27 +370,83 @@ Send a new email.
 | `message[subject]` | string | Yes | Email subject |
 | `message[content]` | string | Yes | Email body (HTML supported) |
 
-**Response:** Redirect to the new message
+**Response:** 302 redirect to the new message (`/messages/{id}` or `/topics/{id}`)
 
 ---
 
-#### POST /topics/{id}/messages
+#### Replying to Emails (Two-Step Flow)
 
-Reply to an email thread.
+Replying to an email in Hey.com is a **two-step process**: first create a draft, then send it via Turbo Stream. A single POST to `/entries/{id}/replies` only creates a draft -- it does NOT send the reply.
+
+##### Step 1: Create Draft
+
+**`POST /entries/{entryId}/replies`**
+
+Create a reply draft on a thread entry.
+
+> **Important**: The reply endpoint uses the **entry ID** (not topic/thread ID). Fetch the thread page (`/topics/{threadId}`) and extract the entry ID from the reply form action (`/entries/{entryId}/replies`).
 
 | Parameter | Type | Location | Description |
 |-----------|------|----------|-------------|
-| `id` | string | path | Topic/thread ID |
+| `id` | string | path | Entry ID (from reply form on thread page) |
+
+**Headers:** Ajax-style headers (not browser form headers).
+
+```http
+X-Requested-With: XMLHttpRequest
+X-CSRF-Token: [token]
+```
 
 **Content-Type:** `application/x-www-form-urlencoded`
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `acting_sender_id` | string | Yes | Your Hey account ID |
-| `acting_sender_email` | string | Yes | Your Hey email address |
 | `message[content]` | string | Yes | Reply body (HTML supported) |
+| `message[auto_quoting]` | string | No | `false` to skip auto-quoting |
 
-**Response:** Redirect to the thread
+**Response:** 302 redirect to `/topics/{threadId}?expanded_draft={draftId}`
+
+Extract the `draftId` from the `expanded_draft` query parameter in the redirect Location header. This draft ID is the **message ID** needed for Step 2.
+
+##### Step 2: Send Draft via PATCH
+
+**`POST /messages/{draftId}` with `_method=patch`**
+
+Send the previously created draft. This is the step that actually delivers the reply. Uses Rails method override (`_method=patch`) because `POST /messages/{id}` without it returns 404 (no create route exists for that path).
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `draftId` | string | path | Draft message ID (from Step 1 `expanded_draft` param) |
+
+**Headers:** Must include the Turbo Stream Accept header and standard origin headers.
+
+```http
+Accept: text/vnd.turbo-stream.html, text/html, application/xhtml+xml
+X-CSRF-Token: [token]
+Origin: https://app.hey.com
+Referer: https://app.hey.com/topics/{threadId}
+```
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `_method` | string | **Yes** | Must be `patch` (Rails method override -- without this, returns 404) |
+| `acting_sender_id` | string | Yes | Your Hey account ID |
+| `remember_last_sender` | string | No | `true` to persist sender choice |
+| `entry[addressed][directly][]` | string | Yes | Recipient email(s) -- NOT pre-populated in draft |
+| `message[subject]` | string | Yes | Reply subject (e.g. `Re: Original Subject`) -- NOT pre-populated in draft |
+| `message[content]` | string | Yes | Reply body (HTML, e.g. `<div>Reply text</div>`) |
+| `entry[scheduled_delivery]` | string | No | `false` for immediate send |
+| `entry[scheduled_bubble_up]` | string | No | `false` to skip bubble-up scheduling |
+| `commit` | string | **Yes** | Must be `Send email` -- triggers actual delivery |
+
+> **Important**: Recipients (`entry[addressed][directly][]`) and subject (`message[subject]`) are NOT pre-populated in the draft. You must include them in this request or the send will fail silently.
+
+> **Discovery note**: The draft's send form lives inside a lazily-loaded Turbo Frame at `/topics/{threadId}/toolbar?expanded_draft={draftId}`, not on the main topic page. The `expanded_draft` entry ID IS the message ID for `/messages/{id}`.
+
+**Response:** 200 with Turbo Stream HTML (confirms send)
 
 ---
 
@@ -839,6 +917,10 @@ When a session expires, requests return a 302 redirect to `/sign_in`. The hey-mc
 1. **Turbo Streams**: Some endpoints use Turbo Streams for partial updates, which may require special handling
 2. **File attachments**: Upload flow not yet implemented
 3. **Bulk operations**: Some bulk operations may use different endpoint patterns
+4. **Header requirements vary by endpoint**: Send (`POST /messages`) requires browser form headers (`Sec-Fetch-Dest: document`, `Sec-Fetch-User: ?1`, `Origin`, `Referer`); Ajax headers cause 404. Reply Step 1 (`POST /entries/{id}/replies`) uses Ajax headers. Reply Step 2 (`POST /messages/{draftId}`) requires Turbo Stream Accept header plus `Origin` and `Referer`.
+5. **Reply Step 2 requires `_method=patch`**: `POST /messages/{id}` without `_method=patch` in the form body returns 404. This is a Rails method override -- the actual route is `PATCH /messages/{id}`.
+6. **Reply draft fields not pre-populated**: The draft created in Step 1 does not pre-populate recipients or subject. Both `entry[addressed][directly][]` and `message[subject]` must be explicitly included in the Step 2 PATCH request.
+7. **`commit=Send email` required for reply delivery**: Without `commit=Send email` in the Step 2 form body, the draft is updated but not sent.
 
 ---
 
@@ -856,3 +938,9 @@ When a session expires, requests return a 302 redirect to `/sign_in`. The hey-mc
 | 2026-01 | Added Paper Trail bundles endpoint: `GET /postings/{id}/bundles/unseen` for grouped transactional emails |
 | 2026-01 | Added new bubble-up slot values: `surprise_me` (random time), `custom` (specific date with `date` POST body) |
 | 2026-01 | Added `waiting_on=true` query parameter for conditional bubble-up (only bubble up if no reply by date) |
+| 2026-03 | **BREAKING**: Send endpoint changed from `POST /entries` to `POST /messages` (former returns 404) |
+| 2026-03 | Send and reply endpoints require browser form headers, not Ajax headers (causes silent failures) |
+| 2026-03 | **BREAKING**: Reply is a two-step flow: (1) `POST /entries/{id}/replies` creates a draft (302 with `expanded_draft={draftId}`), (2) `POST /messages/{draftId}` with `_method=patch`, Turbo Stream Accept header, `commit=Send email`, recipients, and subject sends the draft. Step 1 alone only creates a draft |
+| 2026-03 | Reply Step 2 requires `_method=patch` (Rails method override) -- without it, `POST /messages/{id}` returns 404 |
+| 2026-03 | Reply draft does not pre-populate recipients or subject -- both must be included in Step 2 PATCH |
+| 2026-03 | Draft send form discovered at `/topics/{threadId}/toolbar?expanded_draft={draftId}` (lazy-loaded Turbo Frame), not on main topic page |
