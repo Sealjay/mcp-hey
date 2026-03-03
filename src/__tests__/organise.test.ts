@@ -2,23 +2,23 @@ import { describe, expect, test } from "bun:test"
 
 describe("Organise Tools", () => {
   describe("Input Validation", () => {
-    test("setAside should require email ID", async () => {
+    test("setAside should require entry ID", async () => {
       // We can't easily mock the HTTP client, so test the validation logic
       const { setAside } = await import("../tools/organise")
 
       const result = await setAside("")
 
       expect(result.success).toBe(false)
-      expect(result.error).toBe("Email ID is required")
+      expect(result.error).toBe("Entry ID is required")
     })
 
-    test("replyLater should require email ID", async () => {
+    test("replyLater should require entry ID", async () => {
       const { replyLater } = await import("../tools/organise")
 
       const result = await replyLater("")
 
       expect(result.success).toBe(false)
-      expect(result.error).toBe("Email ID is required")
+      expect(result.error).toBe("Entry ID is required")
     })
 
     test("screenIn should require sender email", async () => {
@@ -39,13 +39,13 @@ describe("Organise Tools", () => {
       expect(result.error).toBe("Sender email is required")
     })
 
-    test("removeFromSetAside should require email ID", async () => {
+    test("removeFromSetAside should require posting ID", async () => {
       const { removeFromSetAside } = await import("../tools/organise")
 
       const result = await removeFromSetAside("")
 
       expect(result.success).toBe(false)
-      expect(result.error).toBe("Email ID is required")
+      expect(result.error).toBe("Posting ID is required")
     })
 
     test("removeFromReplyLater should require posting ID", async () => {

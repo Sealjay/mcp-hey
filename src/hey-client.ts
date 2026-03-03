@@ -263,7 +263,9 @@ export class HeyClient {
           // Absolute URL - extract path
           const url = new URL(location)
           if (url.hostname !== "app.hey.com") {
-            throw new Error(`Unexpected redirect to different host: ${location}`)
+            throw new Error(
+              `Unexpected redirect to different host: ${location}`,
+            )
           }
           currentPath = url.pathname + url.search
         } else {
@@ -335,6 +337,67 @@ export class HeyClient {
 
     const headers: Record<string, string> = {
       ...getAjaxHeaders(session, token),
+    }
+
+    if (body) {
+      headers["Content-Type"] = "application/x-www-form-urlencoded"
+    }
+
+    const response = await fetchWithRetry(url, {
+      method: "POST",
+      headers,
+      body: body?.toString(),
+      redirect: "manual",
+    })
+
+    return this.handleResponse(response)
+  }
+
+  async postForm(
+    path: string,
+    body?: URLSearchParams | FormData,
+    csrfToken?: string,
+  ): Promise<Response> {
+    const session = await this.ensureSession()
+    const token = csrfToken || (await this.getCsrfToken())
+    const url = `${BASE_URL}${path}`
+
+    const headers: Record<string, string> = {
+      ...getBrowserHeaders(session),
+      "X-CSRF-Token": token,
+      Origin: BASE_URL,
+      Referer: `${BASE_URL}/imbox`,
+    }
+
+    if (body) {
+      headers["Content-Type"] = "application/x-www-form-urlencoded"
+    }
+
+    const response = await fetchWithRetry(url, {
+      method: "POST",
+      headers,
+      body: body?.toString(),
+      redirect: "manual",
+    })
+
+    return this.handleResponse(response)
+  }
+
+  async postTurbo(
+    path: string,
+    body?: URLSearchParams | FormData,
+    csrfToken?: string,
+  ): Promise<Response> {
+    const session = await this.ensureSession()
+    const token = csrfToken || (await this.getCsrfToken())
+    const url = `${BASE_URL}${path}`
+
+    const headers: Record<string, string> = {
+      ...getBrowserHeaders(session),
+      Accept: "text/vnd.turbo-stream.html, text/html, application/xhtml+xml",
+      "X-CSRF-Token": token,
+      Origin: BASE_URL,
+      Referer: `${BASE_URL}/imbox`,
     }
 
     if (body) {
