@@ -376,7 +376,7 @@ Send a new email.
 
 #### Replying to Emails (Two-Step Flow)
 
-Replying to an email in Hey.com is a **two-step process**: first create a draft, then send it via Turbo Stream. A single POST to `/entries/{id}/replies` only creates a draft -- it does NOT send the reply.
+Replying to an email in Hey.com is a **two-step process**: first create a draft, then send it via a PATCH request with Turbo Stream headers. A single POST to `/entries/{id}/replies` only creates a draft -- it does NOT send the reply.
 
 ##### Step 1: Create Draft
 
