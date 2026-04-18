@@ -1,54 +1,139 @@
-# hey-mcp
+# mcp-hey
 
-A local MCP (Model Context Protocol) server for Hey.com email integration with Claude.
+[![Bun](https://img.shields.io/badge/Bun-1.1+-000000?logo=bun&logoColor=ffffff)](https://bun.sh)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=ffffff)](https://www.typescriptlang.org/)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=ffffff)](https://www.python.org/)
+[![MCP](https://img.shields.io/badge/MCP-Model_Context_Protocol-6E44FF)](https://modelcontextprotocol.io/)
+[![License: MIT](https://img.shields.io/github/license/Sealjay/mcp-hey)](LICENCE)
+[![GitHub issues](https://img.shields.io/github/issues/Sealjay/mcp-hey)](https://github.com/Sealjay/mcp-hey/issues)
+[![GitHub stars](https://img.shields.io/github/stars/Sealjay/mcp-hey?style=social)](https://github.com/Sealjay/mcp-hey)
+
+> A local Model Context Protocol (MCP) server that gives Claude read/write access to your [Hey.com](https://hey.com) inbox via reverse-engineered web APIs.
+
+mcp-hey has two moving parts: a Bun/TypeScript MCP server that exposes Hey tools over stdio, and a small Python helper that uses the system webview to capture session cookies at login. Everything runs locally — no cloud relay, no credentials stored, just session cookies on disk.
+
+> **Heads up — unofficial API.** Hey.com does not publish a public API; mcp-hey reverse-engineers its web endpoints and pairs them with browser-identical HTTP requests. Things can break without notice. The current documented surface lives in [`docs/API.md`](docs/API.md).
 
 ## Features
 
-- Read emails from Imbox, Feed, Paper Trail, Set Aside, Reply Later
-- Send and reply to emails
-- Search emails
-- Manage email organisation (set aside, reply later, screen in/out)
-- Lightweight (~30MB idle memory)
-- Browser-identical requests to avoid detection
-- No cloud dependencies - runs entirely locally
+- Read emails from Imbox, Feed, Paper Trail, Set Aside, and Reply Later
+- Send and reply to email threads
+- Search emails across boxes
+- Organise mail (set aside, reply later, screen in/out, bubble up)
+- Local SQLite cache for faster repeated reads and full-text search
+- Lightweight — around 30 MB idle memory
+- Browser-identical headers and TLS posture to avoid detection
+- Runs entirely on your machine; stdio transport with no network exposure
 
-## Requirements
+## Setup
+
+### Prerequisites
 
 - [Bun](https://bun.sh) 1.1 or later
-- Python 3.10 or later
+- Python 3.10 or later (plus [UV](https://docs.astral.sh/uv/) if you want to follow the Python tooling in [`CLAUDE.md`](CLAUDE.md))
 - A Hey.com account
+- **Platform**: developed and tested on macOS and Linux. Windows users will likely need WSL — pywebview's Windows backend is not currently exercised.
 
-## Installation
+### Installation
 
-```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/hey-mcp.git
-cd hey-mcp
+1. **Clone this repository**
 
-# Install dependencies
-bun install
-pip install -r auth/requirements.txt
+   ```bash
+   git clone https://github.com/Sealjay/mcp-hey.git
+   cd mcp-hey
+   ```
 
-# First run - will open browser for Hey.com login
-bun run dev
-```
+2. **Install dependencies**
 
-## Claude Desktop Configuration
+   ```bash
+   bun install
+   pip install -r auth/requirements.txt
+   ```
 
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+3. **First run — authenticate**
+
+   ```bash
+   bun run dev
+   ```
+
+   The Python auth helper opens a system webview pointed at Hey.com. Log in as normal; the helper captures session cookies to `data/hey-cookies.json` (permissions locked to `600`) and exits. Subsequent runs reuse the stored session until it expires.
+
+## MCP client configuration
+
+### Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
 
 ```json
 {
   "mcpServers": {
     "hey": {
       "command": "bun",
-      "args": ["run", "/path/to/hey-mcp/src/index.ts"]
+      "args": ["run", "/absolute/path/to/mcp-hey/src/index.ts"]
     }
   }
 }
 ```
 
-## Available Tools
+Restart Claude Desktop. You should see `hey` listed as an available integration.
+
+### Cursor
+
+Add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "hey": {
+      "command": "bun",
+      "args": ["run", "/absolute/path/to/mcp-hey/src/index.ts"]
+    }
+  }
+}
+```
+
+Restart Cursor.
+
+## Architecture
+
+| Component | Description |
+|-----------|-------------|
+| MCP server | Bun/TypeScript, stdio transport, ~30 MB idle memory |
+| Auth helper | Python/pywebview, spawns on-demand for login via system webview |
+| Cache | Local SQLite store for messages, threads, and search index |
+| Communication | File-based session sharing via `data/hey-cookies.json` |
+
+### Data flow
+
+1. MCP client (Claude Desktop / Cursor) launches `bun run src/index.ts` over stdio.
+2. On startup the server validates `data/hey-cookies.json`. If missing or expired it spawns `auth/hey-auth.py`, which opens Hey in a system webview and writes fresh cookies.
+3. Tool calls hit Hey.com directly with browser-realistic headers; responses are parsed (HTML via `node-html-parser`) and cached in SQLite.
+4. Write operations fetch a fresh CSRF token before submitting.
+
+### Project structure
+
+```
+mcp-hey/
+  src/
+    index.ts           # MCP server entry point
+    hey-client.ts      # HTTP client with cookie injection
+    session.ts         # Session management and validation
+    cache/             # SQLite cache (db, schema, messages, search)
+    tools/             # MCP tool implementations (read, send, organise)
+    __tests__/         # Test suites
+  auth/
+    hey-auth.py        # Python auth helper (pywebview)
+    requirements.txt
+  data/
+    hey-cookies.json   # Session storage (gitignored, chmod 600)
+  docs/
+    API.md             # Hey.com API surface documentation
+    TOOLS.md           # MCP tool reference (40 tools)
+```
+
+## Available tools
+
+A summary — see [`docs/TOOLS.md`](docs/TOOLS.md) for all 40 tools with parameter documentation and error behaviour.
 
 | Tool                   | Description                   |
 |------------------------|-------------------------------|
@@ -66,27 +151,44 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 | `hey_screen_in`        | Approve sender from Screener  |
 | `hey_screen_out`       | Reject sender from Screener   |
 
-## How It Works
+## Privacy and security
 
-1. On first run (or when session expires), a system webview opens for Hey.com login
-2. Session cookies are captured and stored locally
-3. The MCP server makes direct HTTP requests to Hey.com using stored cookies
-4. Requests use browser-identical TLS fingerprints and headers
+- No credentials are ever stored — only session cookies, written with `600` permissions.
+- Authentication happens entirely inside Hey's own login page (system webview).
+- All data stays on your machine. No telemetry is emitted by this project.
+- MCP uses stdio transport — the server never opens a network listener.
+- Session validity is checked on startup and before sensitive operations.
 
-## Privacy & Security
-
-- No credentials are ever stored - only session cookies
-- Authentication happens entirely within Hey's own login page
-- All data stays on your machine
-- MCP uses stdio transport with no network exposure
+See [`SECURITY.md`](SECURITY.md) for how to report vulnerabilities.
 
 ## Limitations
 
-- No real-time notifications (polling only)
-- Attachment uploads not yet supported
-- Single account only
-- May break if Hey.com changes their frontend
+- **Prompt-injection risk**: as with many MCP servers, this one is subject to [the lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/). A malicious email arriving in your inbox could attempt to instruct Claude to exfiltrate other messages. Treat the tool surface accordingly and review risky actions before approving them.
+- **Unofficial API**: Hey.com's frontend can change without notice and break things. Expect occasional breakage and check [`docs/API.md`](docs/API.md) for known deltas.
+- **No real-time notifications**: polling only.
+- **Attachment uploads** are not yet supported.
+- **Single account** per MCP server instance.
+- **Account risk**: aggressive or abnormal access patterns could in theory trigger Hey's anti-abuse systems. The server respects `x-ratelimit` headers and backs off exponentially, but there are no guarantees.
 
-## License
+## Troubleshooting
 
-MIT
+- **Auth webview does not open** — confirm Python 3.10+ is on `PATH` and `pip install -r auth/requirements.txt` succeeded. On Linux ensure a webview backend is available (`python -c "import webview"` should not error).
+- **`401`/`403` responses after weeks of use** — your Hey session has expired. Delete `data/hey-cookies.json` and run `bun run dev` again to re-auth.
+- **Rate limits (`429`)** — the client respects `x-ratelimit` headers and backs off. If you see sustained 429s, reduce concurrent tool use or wait a few minutes.
+- **Bun cannot find the script in Claude Desktop/Cursor** — the `args` path must be absolute, not relative, and `bun` must be discoverable from the client's launch environment (on macOS this may mean using a full path like `/opt/homebrew/bin/bun`).
+- **Cookie name changed** — Hey has renamed session cookies before (e.g. `_hey_session` → `session_token`, see `CLAUDE.md` for the log). If auth silently fails after a Hey update, capture fresh cookies and compare.
+
+## Contributing
+
+Contributions welcome via pull request. Please:
+
+- Use conventional commits (`feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `cicd`, `revert`, `WIP`).
+- Run `bun run format` and `bun run lint` before pushing.
+- Ensure `bun test` passes.
+- Update [`docs/API.md`](docs/API.md) if you discover or change any Hey.com API behaviour.
+
+See [`CLAUDE.md`](CLAUDE.md) for the full development workflow.
+
+## Licence
+
+MIT Licence — see [LICENCE](LICENCE).
