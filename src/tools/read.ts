@@ -926,9 +926,7 @@ function extractSearchResultsFromHtml(html: string): Email[] {
     const root = parseHtml(html)
     const emails: Email[] = []
 
-    const items = root.querySelectorAll(
-      "a.action-group__action--envelope",
-    )
+    const items = root.querySelectorAll("a.action-group__action--envelope")
 
     for (const item of items) {
       const href = item.getAttribute("href") || ""
@@ -943,15 +941,11 @@ function extractSearchResultsFromHtml(html: string): Email[] {
       if (!id) continue
 
       // Subject from first span child inside span.u-min-width
-      const subjectEl = item.querySelector(
-        "span.u-min-width > span",
-      )
+      const subjectEl = item.querySelector("span.u-min-width > span")
       const subject = subjectEl?.text?.trim() || "(No subject)"
 
       // Sender from small element
-      const senderEl = item.querySelector(
-        "span.u-min-width > small",
-      )
+      const senderEl = item.querySelector("span.u-min-width > small")
       const from = senderEl?.text?.trim() || "Unknown"
 
       // Date from time element
