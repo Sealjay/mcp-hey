@@ -1,4 +1,5 @@
 import { parse as parseHtml } from "node-html-parser"
+import { HeyError } from "./errors"
 import {
   type Session,
   ensureValidSession,
@@ -134,12 +135,19 @@ function updateRateLimiter(rateLimit: RateLimitInfo): void {
   }
 }
 
+async function backoff(attempt: number): Promise<void> {
+  const baseDelay = 2 ** attempt * 1000
+  const jitter = Math.random() * 500
+  await sleep(baseDelay + jitter)
+}
+
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
   maxRetries = 3,
 ): Promise<Response> {
   let lastError: Error | null = null
+  let lastStatus = 0
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
@@ -163,17 +171,40 @@ async function fetchWithRetry(
         }
       }
 
+      // Retry transient HTTP failures. 429 without rate-limit headers falls
+      // here too; 4xx other than 429 are returned for callers to handle.
+      if (response.status >= 500 || response.status === 429) {
+        lastStatus = response.status
+        if (attempt < maxRetries - 1) {
+          console.error(
+            `[hey-mcp] HTTP ${response.status}, retrying (attempt ${attempt + 1}/${maxRetries})`,
+          )
+          await backoff(attempt)
+          continue
+        }
+        throw new HeyError(
+          response.status === 429 ? "rate_limited" : "transient",
+          `Request failed with status ${response.status}`,
+          response.status,
+        )
+      }
+
       return response
     } catch (err) {
+      if (err instanceof HeyError) throw err
       lastError = err as Error
-      // Exponential backoff with jitter
-      const baseDelay = 2 ** attempt * 1000
-      const jitter = Math.random() * 500
-      await sleep(baseDelay + jitter)
+      await backoff(attempt)
     }
   }
 
-  throw lastError || new Error("Request failed after retries")
+  if (lastStatus) {
+    throw new HeyError(
+      lastStatus === 429 ? "rate_limited" : "transient",
+      `Request failed with status ${lastStatus}`,
+      lastStatus,
+    )
+  }
+  throw lastError ?? new HeyError("transient", "Request failed after retries")
 }
 
 // CSRF token cache TTL (5 minutes)

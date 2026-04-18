@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs"
-import { chmod } from "node:fs/promises"
+import { chmod, rename } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { spawn } from "bun"
@@ -43,9 +43,11 @@ export async function loadSession(): Promise<Session | null> {
 
 export async function saveSession(session: Session): Promise<void> {
   await ensureDataDir()
-  await Bun.write(COOKIES_PATH, JSON.stringify(session, null, 2))
-  // Set file permissions to 600 (user read/write only)
-  await chmod(COOKIES_PATH, 0o600)
+  const tmpPath = `${COOKIES_PATH}.tmp`
+  await Bun.write(tmpPath, JSON.stringify(session, null, 2))
+  // Set permissions before the rename so the final file is never world-readable.
+  await chmod(tmpPath, 0o600)
+  await rename(tmpPath, COOKIES_PATH)
 }
 
 export function getCookieHeader(session: Session): string {
@@ -103,7 +105,19 @@ export async function runAuthHelper(): Promise<boolean> {
 // Skip validation if session was validated within this many milliseconds
 const VALIDATION_GRACE_PERIOD_MS = 5 * 60 * 1000 // 5 minutes
 
+// Single-flight: concurrent callers share one in-flight refresh so we never
+// spawn two auth helpers for the same expiry.
+let inFlightRefresh: Promise<Session | null> | null = null
+
 export async function ensureValidSession(): Promise<Session | null> {
+  if (inFlightRefresh) return inFlightRefresh
+  inFlightRefresh = doEnsureValidSession().finally(() => {
+    inFlightRefresh = null
+  })
+  return inFlightRefresh
+}
+
+async function doEnsureValidSession(): Promise<Session | null> {
   let session = await loadSession()
 
   if (session) {
