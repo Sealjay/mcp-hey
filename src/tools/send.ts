@@ -1,6 +1,7 @@
 import { parse as parseHtml } from "node-html-parser"
 import { invalidateForAction } from "../cache"
 import { heyClient } from "../hey-client"
+import { withCsrfRetry } from "./http-helpers"
 
 // Debug mode - set via environment variable
 const DEBUG = process.env.HEY_MCP_DEBUG === "true"
@@ -61,42 +62,6 @@ export function classifyRedirect(response: Response): RedirectClassification {
     type: "success",
     warning: `Unexpected redirect to: ${location}`,
   }
-}
-
-/**
- * POST a form with browser headers, retrying once on CSRF 422.
- */
-async function postFormWithCsrfRetry(
-  path: string,
-  formData: URLSearchParams,
-): Promise<Response> {
-  const response = await heyClient.postForm(path, formData)
-
-  if (response.status === 422) {
-    debugLog("Got 422, invalidating CSRF token and retrying")
-    heyClient.invalidateCsrfToken()
-    return heyClient.postForm(path, formData)
-  }
-
-  return response
-}
-
-/**
- * POST a form with Turbo Stream headers, retrying once on CSRF 422.
- */
-async function postTurboWithCsrfRetry(
-  path: string,
-  formData: URLSearchParams,
-): Promise<Response> {
-  const response = await heyClient.postTurbo(path, formData)
-
-  if (response.status === 422) {
-    debugLog("Got 422 on Turbo POST, invalidating CSRF token and retrying")
-    heyClient.invalidateCsrfToken()
-    return heyClient.postTurbo(path, formData)
-  }
-
-  return response
 }
 
 interface AccountInfo {
@@ -276,7 +241,9 @@ export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
     formData.append("message[subject]", subject)
     formData.append("message[content]", body)
 
-    const response = await postFormWithCsrfRetry("/messages", formData)
+    const response = await withCsrfRetry(() =>
+      heyClient.postForm("/messages", formData),
+    )
 
     if (response.status >= 200 && response.status < 300) {
       safeInvalidateCache("send")
@@ -431,7 +398,9 @@ export async function forwardEmail(params: ForwardParams): Promise<SendResult> {
     formData.append("message[content]", fullBody)
 
     debugLog("Forwarding email", { entryId, to, subject })
-    const response = await postFormWithCsrfRetry("/messages", formData)
+    const response = await withCsrfRetry(() =>
+      heyClient.postForm("/messages", formData),
+    )
 
     if (response.status >= 200 && response.status < 300) {
       safeInvalidateCache("forward")
@@ -641,9 +610,8 @@ export async function replyToEmail(params: ReplyParams): Promise<SendResult> {
       subject: replySubject,
     })
 
-    const sendResponse = await postTurboWithCsrfRetry(
-      `/messages/${draftId}`,
-      sendFormData,
+    const sendResponse = await withCsrfRetry(() =>
+      heyClient.postTurbo(`/messages/${draftId}`, sendFormData),
     )
 
     debugLog("Send response", {

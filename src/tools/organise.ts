@@ -1,5 +1,11 @@
 import { invalidateForAction, updateReadStatus } from "../cache"
+import { toUserError } from "../errors"
 import { heyClient } from "../hey-client"
+import {
+  organiseResponseToResult,
+  tryEndpoints,
+  withCsrfRetry,
+} from "./http-helpers"
 
 export interface OrganiseResult {
   success: boolean
@@ -12,57 +18,25 @@ export async function setAside(entryId: string): Promise<OrganiseResult> {
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    // Try multiple endpoints - Hey may use topics or entries
     const endpoints = [
       `/topics/${entryId}/set_aside`,
       `/entries/${entryId}/set_aside`,
       `/topics/${entryId}/status/set_aside`,
     ]
 
-    let response: Response | null = null
-    let lastError: string | null = null
+    const response = await withCsrfRetry(() =>
+      tryEndpoints(endpoints, async (endpoint) => {
+        const post = await heyClient.post(endpoint)
+        if (post.ok || post.status === 302) return post
+        return heyClient.put(endpoint)
+      }),
+    )
 
-    for (const endpoint of endpoints) {
-      try {
-        // Try POST first (like bubble_up), then PUT
-        response = await heyClient.post(endpoint, undefined, csrfToken)
-        if (response.status >= 200 && response.status < 400) {
-          break // Success
-        }
-        // Try PUT as fallback
-        response = await heyClient.put(endpoint, undefined, csrfToken)
-        if (response.status >= 200 && response.status < 400) {
-          break // Success
-        }
-        lastError = `${endpoint} returned ${response.status}`
-      } catch (err) {
-        lastError = `${endpoint} failed: ${err instanceof Error ? err.message : "Unknown"}`
-      }
-    }
-
-    if (!response) {
-      return { success: false, error: lastError || "All endpoints failed" }
-    }
-
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("set_aside", entryId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("set_aside", entryId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("set_aside", entryId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -72,50 +46,20 @@ export async function replyLater(entryId: string): Promise<OrganiseResult> {
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    // Try multiple endpoints - listings return topicId but this endpoint may need entryId
     const endpoints = [
       `/entries/${entryId}/reply_later`,
       `/topics/${entryId}/reply_later`,
     ]
 
-    let response: Response | null = null
-    let lastError: string | null = null
+    const response = await withCsrfRetry(() =>
+      tryEndpoints(endpoints, (endpoint) => heyClient.put(endpoint)),
+    )
 
-    for (const endpoint of endpoints) {
-      try {
-        response = await heyClient.put(endpoint, undefined, csrfToken)
-        if (response.status >= 200 && response.status < 400) {
-          break
-        }
-        lastError = `${endpoint} returned ${response.status}`
-      } catch (err) {
-        lastError = `${endpoint} failed: ${err instanceof Error ? err.message : "Unknown"}`
-      }
-    }
-
-    if (!response) {
-      return { success: false, error: lastError || "All endpoints failed" }
-    }
-
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("reply_later", entryId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("reply_later", entryId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("reply_later", entryId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -148,7 +92,6 @@ export async function removeFromSetAside(
   }
 
   try {
-    // Get the box_id from the Set Aside page (account-specific)
     const boxId = await getSetAsideBoxId()
     if (!boxId) {
       return {
@@ -158,35 +101,18 @@ export async function removeFromSetAside(
       }
     }
 
-    const csrfToken = await heyClient.getCsrfToken()
-
-    // Use POST /postings/moves?box_id={boxId} with posting_ids form field
     const formData = new URLSearchParams()
     formData.append("posting_ids", postingId)
 
-    const response = await heyClient.post(
-      `/postings/moves?box_id=${boxId}`,
-      formData,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/postings/moves?box_id=${boxId}`, formData),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("set_aside", postingId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("set_aside", postingId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("set_aside", postingId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -219,7 +145,6 @@ export async function removeFromReplyLater(
   }
 
   try {
-    // Get the box_id from the Reply Later page (account-specific)
     const boxId = await getReplyLaterBoxId()
     if (!boxId) {
       return {
@@ -229,35 +154,18 @@ export async function removeFromReplyLater(
       }
     }
 
-    const csrfToken = await heyClient.getCsrfToken()
-
-    // Use POST /postings/moves?box_id={boxId} with posting_ids form field
     const formData = new URLSearchParams()
     formData.append("posting_ids", postingId)
 
-    const response = await heyClient.post(
-      `/postings/moves?box_id=${boxId}`,
-      formData,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/postings/moves?box_id=${boxId}`, formData),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("reply_later", postingId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("reply_later", postingId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("reply_later", postingId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -267,8 +175,6 @@ export async function screenIn(senderEmail: string): Promise<OrganiseResult> {
   }
 
   try {
-    // First, we need to find the clearance ID for this sender
-    // by fetching the screener page and looking for the email
     const clearanceId = await findClearanceIdByEmail(senderEmail)
     if (!clearanceId) {
       return {
@@ -277,13 +183,9 @@ export async function screenIn(senderEmail: string): Promise<OrganiseResult> {
       }
     }
 
-    // Use the clearance ID to screen in
     return screenInById(clearanceId)
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -297,7 +199,6 @@ async function findClearanceIdByEmail(
   const { parse: parseHtml } = await import("node-html-parser")
   const root = parseHtml(html)
 
-  // Find forms that contain the sender email
   const forms = root.querySelectorAll("form[action*='/clearances/']")
   for (const form of forms) {
     const formHtml = form.toString().toLowerCase()
@@ -310,21 +211,18 @@ async function findClearanceIdByEmail(
     }
   }
 
-  // Also try looking in the surrounding article/section for the email
   const articles = root.querySelectorAll(
     "article, section, [data-clearance-id]",
   )
   for (const article of articles) {
     const articleText = article.text.toLowerCase()
     if (articleText.includes(senderEmail.toLowerCase())) {
-      // Find clearance ID in nested form
       const form = article.querySelector("form[action*='/clearances/']")
       const action = form?.getAttribute("action")
       const match = action?.match(/\/clearances\/(\d+)/)
       if (match) {
         return match[1]
       }
-      // Or from data attribute
       const clearanceId = article.getAttribute("data-clearance-id")
       if (clearanceId) {
         return clearanceId
@@ -341,7 +239,6 @@ export async function screenOut(senderEmail: string): Promise<OrganiseResult> {
   }
 
   try {
-    // First, we need to find the clearance ID for this sender
     const clearanceId = await findClearanceIdByEmail(senderEmail)
     if (!clearanceId) {
       return {
@@ -350,13 +247,9 @@ export async function screenOut(senderEmail: string): Promise<OrganiseResult> {
       }
     }
 
-    // Use the clearance ID to screen out
     return screenOutById(clearanceId)
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -368,36 +261,19 @@ export async function screenOutById(
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    // Hey uses POST with _method=patch and status=denied for screen out
     const formData = new URLSearchParams()
     formData.append("_method", "patch")
     formData.append("status", "denied")
 
-    const response = await heyClient.post(
-      `/clearances/${clearanceId}`,
-      formData,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/clearances/${clearanceId}`, formData),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("delete") // Screened out emails are removed
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("delete")
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("delete"),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -407,31 +283,15 @@ export async function markAsRead(emailId: string): Promise<OrganiseResult> {
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const response = await heyClient.put(
-      `/entries/${emailId}/read`,
-      undefined,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.put(`/entries/${emailId}/read`),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      updateReadStatus(emailId, true)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      updateReadStatus(emailId, true)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      updateReadStatus(emailId, true),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -441,30 +301,15 @@ export async function markAsUnread(emailId: string): Promise<OrganiseResult> {
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const response = await heyClient.delete(
-      `/entries/${emailId}/read`,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.delete(`/entries/${emailId}/read`),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      updateReadStatus(emailId, false)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      updateReadStatus(emailId, false)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      updateReadStatus(emailId, false),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -474,31 +319,15 @@ export async function trashEmail(topicId: string): Promise<OrganiseResult> {
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const response = await heyClient.post(
-      `/topics/${topicId}/status/trashed`,
-      undefined,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/topics/${topicId}/status/trashed`),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("trash", topicId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("trash", topicId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("trash", topicId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -510,31 +339,15 @@ export async function restoreFromTrash(
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const response = await heyClient.post(
-      `/topics/${topicId}/status/active`,
-      undefined,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/topics/${topicId}/status/active`),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("restore", topicId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("restore", topicId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("restore", topicId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -544,31 +357,15 @@ export async function markAsSpam(topicId: string): Promise<OrganiseResult> {
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const response = await heyClient.post(
-      `/topics/${topicId}/status/spam`,
-      undefined,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/topics/${topicId}/status/spam`),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("spam", topicId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("spam", topicId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("spam", topicId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -578,31 +375,15 @@ export async function markAsNotSpam(topicId: string): Promise<OrganiseResult> {
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const response = await heyClient.post(
-      `/topics/${topicId}/status/ham`,
-      undefined,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/topics/${topicId}/status/ham`),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("restore", topicId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("restore", topicId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("restore", topicId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -612,31 +393,15 @@ export async function markAsUnseen(topicId: string): Promise<OrganiseResult> {
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const response = await heyClient.post(
-      `/topics/${topicId}/unseen`,
-      undefined,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/topics/${topicId}/unseen`),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      updateReadStatus(topicId, false)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      updateReadStatus(topicId, false)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      updateReadStatus(topicId, false),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -685,37 +450,23 @@ export async function bubbleUp(
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    // Build the endpoint URL
     const endpoint = `/postings/bubble_up?posting_ids[]=${postingId}&slot=${slot}`
 
-    // For custom slot, include date in the POST body
     let formData: URLSearchParams | undefined
     if (slot === "custom" && date) {
       formData = new URLSearchParams()
       formData.append("date", date)
     }
 
-    const response = await heyClient.post(endpoint, formData, csrfToken)
+    const response = await withCsrfRetry(() =>
+      heyClient.post(endpoint, formData),
+    )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("bubble_up", postingId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("bubble_up", postingId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("bubble_up", postingId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -728,34 +479,19 @@ export async function popBubble(postingId: string): Promise<OrganiseResult> {
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
     const endpoint = `/postings/bubble_up?posting_ids[]=${postingId}`
-    const response = await heyClient.delete(endpoint, csrfToken)
+    const response = await withCsrfRetry(() => heyClient.delete(endpoint))
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("bubble_up", postingId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("bubble_up", postingId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("bubble_up", postingId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
 /**
  * Schedule an email to bubble up ONLY if there's no reply by a specific date.
- * This is a conditional bubble-up - the email will only reappear if the
- * recipient hasn't replied by the deadline.
  */
 export async function bubbleUpIfNoReply(
   postingId: string,
@@ -775,33 +511,20 @@ export async function bubbleUpIfNoReply(
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    // Use custom slot with waiting_on=true for conditional bubble-up
     const endpoint = `/postings/bubble_up?posting_ids[]=${postingId}&slot=custom&waiting_on=true`
 
     const formData = new URLSearchParams()
     formData.append("date", date)
 
-    const response = await heyClient.post(endpoint, formData, csrfToken)
+    const response = await withCsrfRetry(() =>
+      heyClient.post(endpoint, formData),
+    )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("bubble_up", postingId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("bubble_up", postingId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("bubble_up", postingId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -811,31 +534,15 @@ export async function ignoreThread(postingId: string): Promise<OrganiseResult> {
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const response = await heyClient.post(
-      `/postings/${postingId}/muting`,
-      undefined,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/postings/${postingId}/muting`),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("mute", postingId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("mute", postingId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("mute", postingId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -847,30 +554,15 @@ export async function unignoreThread(
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const response = await heyClient.delete(
-      `/postings/${postingId}/muting`,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.delete(`/postings/${postingId}/muting`),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("unmute", postingId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("unmute", postingId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("unmute", postingId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -882,36 +574,19 @@ export async function screenInById(
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    // Hey uses POST with _method=patch and status=approved for screen in
     const formData = new URLSearchParams()
     formData.append("_method", "patch")
     formData.append("status", "approved")
 
-    const response = await heyClient.post(
-      `/clearances/${clearanceId}`,
-      formData,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/clearances/${clearanceId}`, formData),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("archive") // Screener changes affect imbox
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("archive")
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("archive"),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -927,31 +602,17 @@ export async function addToCollection(
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const response = await heyClient.post(
-      `/topics/${topicId}/collecting?collection_id=${collectionId}`,
-      undefined,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.post(
+        `/topics/${topicId}/collecting?collection_id=${collectionId}`,
+      ),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("collection", topicId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("collection", topicId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("collection", topicId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -967,30 +628,17 @@ export async function removeFromCollection(
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const response = await heyClient.delete(
-      `/topics/${topicId}/collecting?collection_id=${collectionId}`,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.delete(
+        `/topics/${topicId}/collecting?collection_id=${collectionId}`,
+      ),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("collection", topicId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("collection", topicId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("collection", topicId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -1006,31 +654,15 @@ export async function addLabel(
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const response = await heyClient.post(
-      `/topics/${topicId}/filings?folder_id=${labelId}`,
-      undefined,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/topics/${topicId}/filings?folder_id=${labelId}`),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("label", topicId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("label", topicId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("label", topicId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
 
@@ -1046,29 +678,14 @@ export async function removeLabel(
   }
 
   try {
-    const csrfToken = await heyClient.getCsrfToken()
-
-    const response = await heyClient.delete(
-      `/topics/${topicId}/filings?folder_id=${labelId}`,
-      csrfToken,
+    const response = await withCsrfRetry(() =>
+      heyClient.delete(`/topics/${topicId}/filings?folder_id=${labelId}`),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      invalidateForAction("label", topicId)
-      return { success: true }
-    }
-    if (response.status === 302) {
-      invalidateForAction("label", topicId)
-      return { success: true }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("label", topicId),
+    )
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    return { success: false, error: toUserError(err) }
   }
 }
