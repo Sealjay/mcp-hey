@@ -56,9 +56,37 @@ mcp-hey has two moving parts: a Bun/TypeScript MCP server that exposes Hey tools
    bun run dev
    ```
 
-   The Python auth helper opens a system webview pointed at Hey.com. Log in as normal; the helper captures session cookies to `data/hey-cookies.json` (permissions locked to `600`) and exits. Subsequent runs reuse the stored session until it expires.
+   The Python auth helper opens a system webview pointed at Hey.com. Log in as normal; the helper captures session cookies to `data/hey-cookies.json` (permissions locked to `600`) and exits. The Bun process then keeps running as the MCP server waiting on stdio — press `Ctrl+C` once auth has completed; your configured MCP client will launch its own instance from here on. Subsequent runs reuse the stored session until it expires.
 
 ## MCP client configuration
+
+All three clients use the same `command`/`args` shape. On macOS, you'll almost certainly need the absolute path to `bun` — see [macOS: `bun` PATH](#macos-bun-path) below.
+
+### Claude Code
+
+The quickest route is the CLI:
+
+```bash
+claude mcp add --transport stdio hey --scope user -- bun run /absolute/path/to/mcp-hey/src/index.ts
+```
+
+The server is available immediately in the current session.
+
+Alternatively, add to `.mcp.json` at your project root (or `~/.claude.json` for a user-scoped server):
+
+```json
+{
+  "mcpServers": {
+    "hey": {
+      "type": "stdio",
+      "command": "bun",
+      "args": ["run", "/absolute/path/to/mcp-hey/src/index.ts"]
+    }
+  }
+}
+```
+
+If you edit the file directly, restart the Claude Code session to pick it up.
 
 ### Claude Desktop
 
@@ -93,6 +121,27 @@ Add to `~/.cursor/mcp.json`:
 ```
 
 Restart Cursor.
+
+### macOS: `bun` PATH
+
+GUI apps (Claude Desktop, Cursor) and shells launched by Claude Code don't always inherit the PATH from your interactive terminal, so a Homebrew-installed `bun` may fail with `spawn bun ENOENT` or simply never connect. Fix by using the absolute path to `bun` in `command`:
+
+- **Apple Silicon Homebrew** — `/opt/homebrew/bin/bun`
+- **Intel Homebrew** — `/usr/local/bin/bun`
+- **Manual install** — run `which bun` in your terminal to find it
+
+Example:
+
+```json
+{
+  "mcpServers": {
+    "hey": {
+      "command": "/opt/homebrew/bin/bun",
+      "args": ["run", "/absolute/path/to/mcp-hey/src/index.ts"]
+    }
+  }
+}
+```
 
 ## Architecture
 
@@ -175,7 +224,7 @@ See [`SECURITY.md`](SECURITY.md) for how to report vulnerabilities.
 - **Auth webview does not open** — confirm Python 3.10+ is on `PATH` and `pip install -r auth/requirements.txt` succeeded. On Linux ensure a webview backend is available (`python -c "import webview"` should not error).
 - **`401`/`403` responses after weeks of use** — your Hey session has expired. Delete `data/hey-cookies.json` and run `bun run dev` again to re-auth.
 - **Rate limits (`429`)** — the client respects `x-ratelimit` headers and backs off. If you see sustained 429s, reduce concurrent tool use or wait a few minutes.
-- **Bun cannot find the script in Claude Desktop/Cursor** — the `args` path must be absolute, not relative, and `bun` must be discoverable from the client's launch environment (on macOS this may mean using a full path like `/opt/homebrew/bin/bun`).
+- **MCP client can't launch the server** — `args` must be an absolute path, not relative. If `bun` itself fails with `spawn bun ENOENT`, see [macOS: `bun` PATH](#macos-bun-path).
 - **Cookie name changed** — Hey has renamed session cookies before (e.g. `_hey_session` → `session_token`, see `CLAUDE.md` for the log). If auth silently fails after a Hey update, capture fresh cookies and compare.
 
 ## Contributing
