@@ -15,6 +15,7 @@ import {
   getUnreadCount,
   runMaintenance,
 } from "./cache"
+import { sanitiseError } from "./errors"
 import { heyClient } from "./hey-client"
 import {
   type BubbleUpSlot,
@@ -59,18 +60,6 @@ import {
   searchEmails,
 } from "./tools/read"
 import { forwardEmail, replyToEmail, sendEmail } from "./tools/send"
-
-function sanitiseError(error: unknown): string {
-  if (error instanceof Error) {
-    // Remove any file paths, URLs, emails, or sensitive info
-    return error.message
-      .replace(/\/[^\s]+/g, "[path]")
-      .replace(/Bearer [^\s]+/g, "[token]")
-      .replace(/https?:\/\/[^\s]+/g, "[url]")
-      .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "[email]")
-  }
-  return "An unknown error occurred"
-}
 
 /**
  * Validate and clamp a numeric parameter within bounds.
