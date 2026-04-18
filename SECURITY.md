@@ -8,14 +8,14 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security issue, please [raise a GitHub issue](https://github.com/Sealjay/mcp-hey/issues) with as much detail as possible:
+Please report security issues privately via [GitHub Security Advisories](https://github.com/Sealjay/mcp-hey/security/advisories/new). Include:
 
 - Description of the vulnerability
 - Steps to reproduce
 - Potential impact
 - Suggested fix (if any)
 
-For issues that you believe should not be disclosed publicly (for example, a flaw in the auth helper that could leak session cookies), open a minimal placeholder issue asking for a private contact channel and I will follow up directly.
+Non-sensitive bugs (crashes, parsing errors, UX issues) should go on the [public issue tracker](https://github.com/Sealjay/mcp-hey/issues) instead.
 
 ## Scope
 

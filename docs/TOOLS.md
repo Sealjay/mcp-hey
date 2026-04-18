@@ -2,7 +2,7 @@
 
 This document provides detailed documentation for all MCP tools provided by hey-mcp.
 
-**Total Tools: 40**
+**Total Tools: 41**
 
 ---
 
@@ -11,7 +11,7 @@ This document provides detailed documentation for all MCP tools provided by hey-
 - [Reading Tools](#reading-tools) (15 tools)
 - [Search Tool](#search-tool) (1 tool)
 - [Sending Tools](#sending-tools) (3 tools)
-- [Organisation Tools](#organisation-tools) (20 tools)
+- [Organisation Tools](#organisation-tools) (21 tools)
 - [Cache Management](#cache-management) (1 tool)
 - [Error Handling](#error-handling)
 
@@ -447,7 +447,7 @@ Move an email to Set Aside for later.
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| id | string | **Yes** | - | The email ID to set aside |
+| entry_id | string | **Yes** | - | The entry ID to set aside (use `entryId` from list operations) |
 
 **Returns:**
 ```json
@@ -465,7 +465,7 @@ Remove an email from Set Aside (move it back to the Imbox or its original locati
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| id | string | **Yes** | - | The email ID to remove from Set Aside |
+| posting_id | string | **Yes** | - | The posting ID to remove from Set Aside (use `postingId` from `hey_list_set_aside`) |
 
 **Returns:**
 ```json
@@ -483,7 +483,7 @@ Move an email to Reply Later.
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| id | string | **Yes** | - | The email ID to mark for reply later |
+| entry_id | string | **Yes** | - | The entry ID to mark for reply later (use `entryId` from list operations) |
 
 **Returns:**
 ```json
@@ -598,6 +598,24 @@ Schedule an email to bubble up ONLY if there's no reply by a specific date. This
 ```
 
 > **Use Case**: Use this tool when you want to be reminded about an email only if the conversation goes cold. If the recipient replies before the deadline, the bubble-up is cancelled automatically.
+
+---
+
+### hey_pop_bubble
+
+Pop (dismiss) a bubbled-up email so it sinks back into the Imbox. The email is not deleted or archived — it just stops being pinned at the top.
+
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| posting_id | string | **Yes** | - | The posting ID to pop/unbubble |
+
+**Returns:**
+```json
+{
+  "success": true
+}
+```
 
 ---
 
@@ -927,9 +945,9 @@ Hey.com uses different ID types for different operations. Always use the correct
 
 | ID Type | Field Name | Used By |
 |---------|------------|---------|
-| **Posting ID** | `postingId` | `hey_bubble_up`, `hey_bubble_up_if_no_reply`, `hey_ignore_thread`, `hey_unignore_thread`, `hey_remove_reply_later`, `hey_read_email` (Paper Trail bundles) |
+| **Posting ID** | `postingId` | `hey_bubble_up`, `hey_bubble_up_if_no_reply`, `hey_pop_bubble`, `hey_ignore_thread`, `hey_unignore_thread`, `hey_unset_aside`, `hey_remove_reply_later`, `hey_read_email` (Paper Trail bundles) |
 | **Topic ID** | `topicId` | `hey_reply`, `hey_trash`, `hey_restore`, `hey_spam`, `hey_not_spam`, `hey_add_label`, `hey_remove_label`, `hey_add_to_collection`, `hey_remove_from_collection`, `hey_mark_unseen`, `hey_read_email` (threads) |
-| **Entry ID** | `entryId` | `hey_set_aside`, `hey_unset_aside`, `hey_reply_later` |
+| **Entry ID** | `entryId` | `hey_set_aside`, `hey_reply_later`, `hey_forward` |
 | **Clearance ID** | `clearanceId` | `hey_screen_in_by_id` |
 
 > **Tip**: When listing emails, the response includes all available ID types. Use the appropriate ID based on the operation you want to perform.

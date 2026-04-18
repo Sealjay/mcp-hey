@@ -118,8 +118,13 @@ mcp-hey/
     index.ts           # MCP server entry point
     hey-client.ts      # HTTP client with cookie injection
     session.ts         # Session management and validation
+    errors.ts          # Error classes and sanitisation
     cache/             # SQLite cache (db, schema, messages, search)
-    tools/             # MCP tool implementations (read, send, organise)
+    tools/             # MCP tool implementations
+      read.ts          # Reading and listing
+      send.ts          # Send, reply, forward
+      organise.ts      # Triage, labels, bubble up, etc.
+      http-helpers.ts  # Shared CSRF retry and endpoint fallback
     __tests__/         # Test suites
   auth/
     hey-auth.py        # Python auth helper (pywebview)
@@ -128,28 +133,23 @@ mcp-hey/
     hey-cookies.json   # Session storage (gitignored, chmod 600)
   docs/
     API.md             # Hey.com API surface documentation
-    TOOLS.md           # MCP tool reference (40 tools)
+    TOOLS.md           # MCP tool reference (41 tools)
 ```
 
 ## Available tools
 
-A summary — see [`docs/TOOLS.md`](docs/TOOLS.md) for all 40 tools with parameter documentation and error behaviour.
+41 tools grouped by function. See [`docs/TOOLS.md`](docs/TOOLS.md) for parameters, return shapes, and error behaviour.
 
-| Tool                   | Description                   |
-|------------------------|-------------------------------|
-| `hey_list_imbox`       | List emails in Imbox          |
-| `hey_list_feed`        | List emails in The Feed       |
-| `hey_list_paper_trail` | List emails in Paper Trail    |
-| `hey_list_set_aside`   | List Set Aside emails         |
-| `hey_list_reply_later` | List Reply Later emails       |
-| `hey_read_email`       | Read full email content by ID |
-| `hey_search`           | Search emails by query        |
-| `hey_send_email`       | Send a new email              |
-| `hey_reply`            | Reply to an email thread      |
-| `hey_set_aside`        | Move email to Set Aside       |
-| `hey_reply_later`      | Move email to Reply Later     |
-| `hey_screen_in`        | Approve sender from Screener  |
-| `hey_screen_out`       | Reject sender from Screener   |
+| Category | Tools |
+|----------|-------|
+| Read | `hey_list_imbox`, `hey_imbox_summary`, `hey_list_feed`, `hey_list_paper_trail`, `hey_list_set_aside`, `hey_list_reply_later`, `hey_list_screener`, `hey_list_trash`, `hey_list_spam`, `hey_list_drafts`, `hey_read_email` |
+| Labels & Collections | `hey_list_labels`, `hey_list_label_emails`, `hey_add_label`, `hey_remove_label`, `hey_list_collections`, `hey_list_collection_emails`, `hey_add_to_collection`, `hey_remove_from_collection` |
+| Send | `hey_send_email`, `hey_reply`, `hey_forward` |
+| Triage | `hey_set_aside`, `hey_unset_aside`, `hey_reply_later`, `hey_remove_reply_later`, `hey_mark_unseen`, `hey_trash`, `hey_restore`, `hey_spam`, `hey_not_spam`, `hey_ignore_thread`, `hey_unignore_thread` |
+| Bubble up | `hey_bubble_up`, `hey_bubble_up_if_no_reply`, `hey_pop_bubble` |
+| Screener | `hey_screen_in`, `hey_screen_in_by_id`, `hey_screen_out` |
+| Search | `hey_search` |
+| Cache | `hey_cache_status` |
 
 ## Privacy and security
 

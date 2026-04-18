@@ -6,7 +6,6 @@ A local MCP server providing Claude with read/write access to Hey.com email acco
 
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
-- [File Structure](#file-structure)
 - [Commands](#commands)
 - [Development Workflow](#development-workflow)
 - [Design Decisions](#design-decisions)
@@ -15,6 +14,8 @@ A local MCP server providing Claude with read/write access to Hey.com email acco
 - [API Documentation Maintenance](#api-documentation-maintenance)
 - [Commit Conventions](#commit-conventions)
 - [Pre-Commit Checklist](#pre-commit-checklist)
+
+> **File layout**: see [README.md](README.md) "Project structure". For the tool surface, see [`docs/TOOLS.md`](docs/TOOLS.md); for reverse-engineered endpoints, [`docs/API.md`](docs/API.md).
 
 ---
 
@@ -38,35 +39,6 @@ A local MCP server providing Claude with read/write access to Hey.com email acco
 | MCP SDK | @modelcontextprotocol/sdk |
 | Testing | Bun test runner |
 | Linting | Biome |
-
----
-
-## File Structure
-
-```
-src/
-  index.ts           # MCP server entry point
-  hey-client.ts      # HTTP client with cookie injection
-  session.ts         # Session management and validation
-  cache/             # SQLite-based caching layer
-    index.ts         # Cache exports
-    db.ts            # Database connection management
-    schema.ts        # Table definitions
-    messages.ts      # Message caching logic
-    search.ts        # Search index utilities
-  tools/             # MCP tool implementations
-    read.ts          # Email reading tools
-    send.ts          # Email sending tools
-    organise.ts      # Organisation tools (set aside, reply later, bubble up)
-  __tests__/         # Test suites
-auth/
-  hey-auth.py        # Python auth helper
-data/
-  hey-cookies.json   # Session storage (gitignored)
-docs/
-  API.md             # Hey.com API surface documentation
-  TOOLS.md           # MCP tool reference
-```
 
 ---
 
@@ -151,15 +123,7 @@ When investigating or fixing Hey.com API issues:
 | Record enum values | Capture actual values from UI (e.g., bubble up time slots) |
 | Update docs | If an endpoint has changed, update immediately |
 
-### Recent API Changes
-
-| Date | Change |
-|------|--------|
-| 2025-12 | Cookie name changed from `_hey_session` to `session_token` |
-| 2025-01 | Bubble up endpoint: `/postings/bubble_up?posting_ids[]={id}&slot={slot}` |
-| 2025-01 | Compose page URL: `/messages/new` |
-| 2026-01 | Reply Later "Done" action uses `POST /postings/moves?box_id={boxId}` with `posting_ids` form field, NOT `DELETE /entries/{id}/reply_later` |
-| 2026-01 | Paper Trail bundle emails use `/postings/{id}/bundles/unseen` endpoint, not `/postings/{id}` |
+The authoritative log of endpoint changes lives in [`docs/API.md`](docs/API.md#changelog). Consult it before assuming an endpoint still works.
 
 ---
 
