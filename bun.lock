@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "hey-mcp",
+      "name": "mcp-hey",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.0.0",
         "node-html-parser": "^6.1.13",

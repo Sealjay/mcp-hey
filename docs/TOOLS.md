@@ -1,6 +1,6 @@
 # Hey MCP Tools Reference
 
-This document provides detailed documentation for all MCP tools provided by hey-mcp.
+This document provides detailed documentation for all MCP tools provided by mcp-hey.
 
 **Total Tools: 41**
 

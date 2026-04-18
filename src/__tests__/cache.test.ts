@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 // Test database path - use OS temp directory for reliable write access
-const TEST_DB_DIR = join(tmpdir(), "hey-mcp-test")
+const TEST_DB_DIR = join(tmpdir(), "mcp-hey-test")
 const TEST_DB_PATH = join(TEST_DB_DIR, "test-cache.db")
 
 describe("Cache Schema", () => {

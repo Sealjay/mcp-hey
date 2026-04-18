@@ -88,7 +88,7 @@ export function ftsSearch(
     }
   } catch (err) {
     // FTS5 query errors are common with special characters
-    console.error("[hey-mcp] FTS search error:", err)
+    console.error("[mcp-hey] FTS search error:", err)
     return null
   }
 }

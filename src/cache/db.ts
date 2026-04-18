@@ -60,7 +60,7 @@ export function getDatabase(): Database {
       return db
     } catch (error) {
       if (isDiskError(error)) {
-        console.error("[hey-mcp] Database connection unhealthy, resetting...")
+        console.error("[mcp-hey] Database connection unhealthy, resetting...")
         resetDatabase()
       } else {
         throw error
@@ -80,7 +80,7 @@ export function getDatabase(): Database {
   } catch (error) {
     if (isDiskError(error)) {
       // Database file is corrupted — delete and recreate
-      console.error("[hey-mcp] Database corrupted, recreating from scratch...")
+      console.error("[mcp-hey] Database corrupted, recreating from scratch...")
       db = null
       try {
         rmSync(DB_PATH, { force: true })
@@ -113,7 +113,7 @@ function initializeSchema(database: Database): void {
   }
 
   if (currentVersion < SCHEMA_VERSION) {
-    console.error(`[hey-mcp] Initializing cache schema v${SCHEMA_VERSION}...`)
+    console.error(`[mcp-hey] Initializing cache schema v${SCHEMA_VERSION}...`)
 
     // Run schema initialization (handles fresh installs via CREATE TABLE IF NOT EXISTS)
     database.exec(INIT_SCHEMA)
@@ -122,7 +122,7 @@ function initializeSchema(database: Database): void {
     try {
       database.exec(FTS_SCHEMA)
     } catch (err) {
-      console.error("[hey-mcp] FTS5 initialization warning:", err)
+      console.error("[mcp-hey] FTS5 initialization warning:", err)
     }
 
     // Migration to v3: add stale column to message_bodies
@@ -132,13 +132,13 @@ function initializeSchema(database: Database): void {
           "ALTER TABLE message_bodies ADD COLUMN stale INTEGER NOT NULL DEFAULT 0",
         )
         console.error(
-          "[hey-mcp] Migrated v2 → v3: added stale column to message_bodies",
+          "[mcp-hey] Migrated v2 → v3: added stale column to message_bodies",
         )
       } catch (err) {
         // Column already exists (idempotent) — safe to ignore
         if (err instanceof Error && err.message.includes("duplicate column")) {
           console.error(
-            "[hey-mcp] Migration v2 → v3: stale column already exists, skipping",
+            "[mcp-hey] Migration v2 → v3: stale column already exists, skipping",
           )
         } else {
           throw err
@@ -153,7 +153,7 @@ function initializeSchema(database: Database): void {
       )
       .run(String(SCHEMA_VERSION))
 
-    console.error("[hey-mcp] Cache schema initialized")
+    console.error("[mcp-hey] Cache schema initialized")
   }
 }
 
@@ -183,7 +183,7 @@ function withRetry<T>(fn: () => T): T {
   } catch (error) {
     if (isDiskError(error)) {
       console.error(
-        "[hey-mcp] Disk I/O error, resetting database and retrying...",
+        "[mcp-hey] Disk I/O error, resetting database and retrying...",
       )
       resetDatabase()
       return fn()

@@ -888,7 +888,7 @@ const tools: Tool[] = [
 // Create MCP server
 const server = new Server(
   {
-    name: "hey-mcp",
+    name: "mcp-hey",
     version: "0.1.0",
   },
   {
@@ -1598,15 +1598,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 })
 
 async function main() {
-  console.error("[hey-mcp] Starting Hey.com MCP server...")
+  console.error("[mcp-hey] Starting Hey.com MCP server...")
 
   // Initialize cache database
   try {
     getDatabase()
-    console.error("[hey-mcp] Cache database initialized")
+    console.error("[mcp-hey] Cache database initialized")
   } catch (error) {
     console.error(
-      "[hey-mcp] Warning: Could not initialize cache:",
+      "[mcp-hey] Warning: Could not initialize cache:",
       sanitiseError(error),
     )
   }
@@ -1614,13 +1614,13 @@ async function main() {
   // Validate session on startup
   try {
     await heyClient.ensureSession()
-    console.error("[hey-mcp] Session validated successfully")
+    console.error("[mcp-hey] Session validated successfully")
   } catch (error) {
     console.error(
-      "[hey-mcp] Warning: Could not validate session:",
+      "[mcp-hey] Warning: Could not validate session:",
       sanitiseError(error),
     )
-    console.error("[hey-mcp] Authentication may be required on first tool use")
+    console.error("[mcp-hey] Authentication may be required on first tool use")
   }
 
   // Set up periodic maintenance
@@ -1629,7 +1629,7 @@ async function main() {
       try {
         runMaintenance()
       } catch (error) {
-        console.error("[hey-mcp] Maintenance error:", sanitiseError(error))
+        console.error("[mcp-hey] Maintenance error:", sanitiseError(error))
       }
     },
     5 * 60 * 1000,
@@ -1637,14 +1637,14 @@ async function main() {
 
   // Handle graceful shutdown
   process.on("SIGINT", () => {
-    console.error("[hey-mcp] Shutting down...")
+    console.error("[mcp-hey] Shutting down...")
     clearInterval(maintenanceInterval)
     closeDatabase()
     process.exit(0)
   })
 
   process.on("SIGTERM", () => {
-    console.error("[hey-mcp] Shutting down...")
+    console.error("[mcp-hey] Shutting down...")
     clearInterval(maintenanceInterval)
     closeDatabase()
     process.exit(0)
@@ -1654,10 +1654,10 @@ async function main() {
   const transport = new StdioServerTransport()
   await server.connect(transport)
 
-  console.error("[hey-mcp] Server running on stdio transport")
+  console.error("[mcp-hey] Server running on stdio transport")
 }
 
 main().catch((error) => {
-  console.error("[hey-mcp] Fatal error:", sanitiseError(error))
+  console.error("[mcp-hey] Fatal error:", sanitiseError(error))
   process.exit(1)
 })

@@ -347,7 +347,7 @@ function extractEmailsFromHtml(html: string): Email[] {
 
     return emails
   } catch (err) {
-    console.error("[hey-mcp] Failed to parse email HTML:", err)
+    console.error("[mcp-hey] Failed to parse email HTML:", err)
     return []
   }
 }
@@ -780,7 +780,7 @@ function extractLabelsFromHtml(html: string): Label[] {
 
     return labels
   } catch (err) {
-    console.error("[hey-mcp] Failed to parse labels HTML:", err)
+    console.error("[mcp-hey] Failed to parse labels HTML:", err)
     return []
   }
 }
@@ -814,7 +814,7 @@ function extractCollectionsFromHtml(html: string): Collection[] {
 
     return collections
   } catch (err) {
-    console.error("[hey-mcp] Failed to parse collections HTML:", err)
+    console.error("[mcp-hey] Failed to parse collections HTML:", err)
     return []
   }
 }
@@ -886,13 +886,13 @@ export async function readEmail(
     let lastError: Error | null = null
     for (const endpoint of endpoints) {
       try {
-        console.error(`[hey-mcp] Trying endpoint: ${endpoint}`)
+        console.error(`[mcp-hey] Trying endpoint: ${endpoint}`)
         content = await heyClient.fetchHtml(endpoint)
-        console.error(`[hey-mcp] Success with endpoint: ${endpoint}`)
+        console.error(`[mcp-hey] Success with endpoint: ${endpoint}`)
         break // Success - exit the loop
       } catch (err) {
         lastError = err as Error
-        console.error(`[hey-mcp] ${endpoint} failed:`, (err as Error).message)
+        console.error(`[mcp-hey] ${endpoint} failed:`, (err as Error).message)
       }
     }
 

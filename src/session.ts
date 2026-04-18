@@ -84,7 +84,7 @@ export async function validateSession(session: Session): Promise<boolean> {
 }
 
 export async function runAuthHelper(): Promise<boolean> {
-  console.error("[hey-mcp] Starting authentication helper...")
+  console.error("[mcp-hey] Starting authentication helper...")
 
   const proc = spawn({
     cmd: ["python3", AUTH_SCRIPT],
@@ -95,10 +95,10 @@ export async function runAuthHelper(): Promise<boolean> {
   const exitCode = await proc.exited
 
   if (exitCode === 0) {
-    console.error("[hey-mcp] Authentication successful")
+    console.error("[mcp-hey] Authentication successful")
     return true
   }
-  console.error(`[hey-mcp] Authentication failed with code ${exitCode}`)
+  console.error(`[mcp-hey] Authentication failed with code ${exitCode}`)
   return false
 }
 
@@ -134,9 +134,9 @@ async function doEnsureValidSession(): Promise<Session | null> {
       await saveSession(session)
       return session
     }
-    console.error("[hey-mcp] Session expired, re-authenticating...")
+    console.error("[mcp-hey] Session expired, re-authenticating...")
   } else {
-    console.error("[hey-mcp] No session found, starting authentication...")
+    console.error("[mcp-hey] No session found, starting authentication...")
   }
 
   // Need to authenticate

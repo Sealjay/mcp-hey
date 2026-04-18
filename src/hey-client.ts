@@ -164,7 +164,7 @@ async function fetchWithRetry(
         if (rateLimit.remaining === 0 && rateLimit.until) {
           const waitMs = rateLimit.until * 1000 - Date.now()
           if (waitMs > 0) {
-            console.error(`[hey-mcp] Rate limited, waiting ${waitMs}ms`)
+            console.error(`[mcp-hey] Rate limited, waiting ${waitMs}ms`)
             await sleep(waitMs)
             continue
           }
@@ -177,7 +177,7 @@ async function fetchWithRetry(
         lastStatus = response.status
         if (attempt < maxRetries - 1) {
           console.error(
-            `[hey-mcp] HTTP ${response.status}, retrying (attempt ${attempt + 1}/${maxRetries})`,
+            `[mcp-hey] HTTP ${response.status}, retrying (attempt ${attempt + 1}/${maxRetries})`,
           )
           await backoff(attempt)
           continue
@@ -236,7 +236,7 @@ export class HeyClient {
     // Check for redirect to sign_in (session expired)
     const location = response.headers.get("location")
     if (response.status === 302 && location?.includes("/sign_in")) {
-      console.error("[hey-mcp] Session expired, refreshing...")
+      console.error("[mcp-hey] Session expired, refreshing...")
       await this.refreshSession()
       throw new Error("Session expired, please retry")
     }
@@ -267,13 +267,13 @@ export class HeyClient {
       const response = await this.fetch(currentPath)
 
       console.error(
-        `[hey-mcp] fetchHtml ${currentPath}: status=${response.status}`,
+        `[mcp-hey] fetchHtml ${currentPath}: status=${response.status}`,
       )
 
       // Handle redirects (301, 302, 303, 307, 308)
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const location = response.headers.get("location")
-        console.error(`[hey-mcp] Redirect to: ${location}`)
+        console.error(`[mcp-hey] Redirect to: ${location}`)
 
         if (!location) {
           throw new Error(`Redirect without location header for ${currentPath}`)
@@ -281,7 +281,7 @@ export class HeyClient {
 
         // Check for auth redirect
         if (location.includes("/sign_in")) {
-          console.error("[hey-mcp] Session expired (redirect to sign_in)")
+          console.error("[mcp-hey] Session expired (redirect to sign_in)")
           await this.refreshSession()
           throw new Error("Session expired, please retry")
         }
@@ -311,7 +311,7 @@ export class HeyClient {
       if (!response.ok) {
         const body = await response.text()
         console.error(
-          `[hey-mcp] HTTP error body (first 500 chars): ${body.slice(0, 500)}`,
+          `[mcp-hey] HTTP error body (first 500 chars): ${body.slice(0, 500)}`,
         )
         throw new Error(`HTTP ${response.status}: Failed to fetch ${path}`)
       }

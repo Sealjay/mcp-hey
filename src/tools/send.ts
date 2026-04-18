@@ -8,7 +8,7 @@ const DEBUG = process.env.HEY_MCP_DEBUG === "true"
 
 function debugLog(message: string, data?: unknown): void {
   if (DEBUG) {
-    console.error(`[hey-mcp:send] ${message}`, data ?? "")
+    console.error(`[mcp-hey:send] ${message}`, data ?? "")
   }
 }
 

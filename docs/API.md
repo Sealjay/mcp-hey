@@ -1,6 +1,6 @@
 # Hey.com API Reference
 
-This document describes the reverse-engineered Hey.com web API endpoints used by hey-mcp.
+This document describes the reverse-engineered Hey.com web API endpoints used by mcp-hey.
 
 > **Warning**: This API is reverse-engineered and may change without notice. Keep this documentation current as you discover changes.
 
@@ -908,7 +908,7 @@ Key data attributes:
 
 ## Session Management
 
-When a session expires, requests return a 302 redirect to `/sign_in`. The hey-mcp client detects this and triggers re-authentication.
+When a session expires, requests return a 302 redirect to `/sign_in`. The mcp-hey client detects this and triggers re-authentication.
 
 ---
 
