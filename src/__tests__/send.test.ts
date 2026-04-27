@@ -140,6 +140,50 @@ describe("Send Tools", () => {
       expect(result.success).toBe(false)
       expect(result.error).toBe("Reply body is required")
     })
+
+    test("should reject empty `to` override", async () => {
+      const { replyToEmail } = await import("../tools/send")
+
+      const result = await replyToEmail({
+        threadId: "123",
+        body: "Just chasing this up.",
+        to: [],
+      })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toBe(
+        "`to` must contain at least one recipient when provided",
+      )
+    })
+
+    test("should reject malformed `to` override addresses", async () => {
+      const { replyToEmail } = await import("../tools/send")
+
+      const result = await replyToEmail({
+        threadId: "123",
+        body: "Just chasing this up.",
+        to: ["not-an-email"],
+      })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain("Invalid recipient email(s)")
+      expect(result.error).toContain("not-an-email")
+    })
+
+    test("should reject malformed `cc` override addresses", async () => {
+      const { replyToEmail } = await import("../tools/send")
+
+      const result = await replyToEmail({
+        threadId: "123",
+        body: "Just chasing this up.",
+        to: ["alice@example.com"],
+        cc: ["also bad"],
+      })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain("Invalid CC email(s)")
+      expect(result.error).toContain("also bad")
+    })
   })
 })
 

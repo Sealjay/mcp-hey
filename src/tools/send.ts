@@ -438,6 +438,16 @@ export async function forwardEmail(params: ForwardParams): Promise<SendResult> {
 export interface ReplyParams {
   threadId: string
   body: string
+  /**
+   * Optional override of the To: line, mirroring Hey's web UI which lets you
+   * change the recipient when chasing a thread you started. When omitted, the
+   * tool reuses the thread participants (excluding the caller).
+   */
+  to?: string[]
+  /**
+   * Optional CC override. Only honoured when `to` is provided.
+   */
+  cc?: string[]
 }
 
 interface ReplyContext {
@@ -506,10 +516,36 @@ async function getReplyContext(threadId: string): Promise<ReplyContext> {
 }
 
 export async function replyToEmail(params: ReplyParams): Promise<SendResult> {
-  const { threadId, body } = params
+  const { threadId, body, to: toOverride, cc: ccOverride } = params
 
   if (!body.trim()) {
     return { success: false, error: "Reply body is required" }
+  }
+
+  if (toOverride !== undefined) {
+    if (toOverride.length === 0) {
+      return {
+        success: false,
+        error: "`to` must contain at least one recipient when provided",
+      }
+    }
+    const invalidTo = findInvalidEmails(toOverride)
+    if (invalidTo.length > 0) {
+      return {
+        success: false,
+        error: `Invalid recipient email(s): ${invalidTo.join(", ")}`,
+      }
+    }
+  }
+
+  if (ccOverride && ccOverride.length > 0) {
+    const invalidCc = findInvalidEmails(ccOverride)
+    if (invalidCc.length > 0) {
+      return {
+        success: false,
+        error: `Invalid CC email(s): ${invalidCc.join(", ")}`,
+      }
+    }
   }
 
   try {
@@ -580,19 +616,42 @@ export async function replyToEmail(params: ReplyParams): Promise<SendResult> {
     //   POST /messages/{id} with _method=patch (Rails method override)
     //   data-remote="true" data-turbo-frame="_top"
     // Recipients and subject are NOT pre-populated in the draft.
-    const recipientEmails = replyContext.participantEmails.filter(
-      (e) => e.toLowerCase() !== accountInfo.senderEmail.toLowerCase(),
-    )
+    //
+    // If `to` was passed in, honour it verbatim (mirrors Hey's web UI, which
+    // lets you change the To: line when chasing a thread you started).
+    // Otherwise reuse the thread participants minus the caller.
+    const recipientEmails =
+      toOverride && toOverride.length > 0
+        ? toOverride.map((email) => email.trim())
+        : replyContext.participantEmails.filter(
+            (e) => e.toLowerCase() !== accountInfo.senderEmail.toLowerCase(),
+          )
+
+    if (recipientEmails.length === 0) {
+      // The thread has no other participant we can detect (the caller is the
+      // only sender so far). Falling back to the caller's own address would
+      // post a topic entry that never leaves Hey, so we surface the failure
+      // and ask the caller to specify `to` explicitly.
+      return {
+        success: false,
+        error:
+          "Could not determine reply recipient from thread participants. Pass `to` with the recipient email address(es) you want to chase.",
+      }
+    }
 
     const sendFormData = new URLSearchParams()
     sendFormData.append("_method", "patch")
     sendFormData.append("acting_sender_id", accountInfo.senderId)
     sendFormData.append("remember_last_sender", "true")
 
-    for (const email of recipientEmails.length > 0
-      ? recipientEmails
-      : [accountInfo.senderEmail]) {
+    for (const email of recipientEmails) {
       sendFormData.append("entry[addressed][directly][]", email)
+    }
+
+    if (ccOverride && ccOverride.length > 0) {
+      for (const ccRecipient of ccOverride) {
+        sendFormData.append("entry[addressed][copied][]", ccRecipient.trim())
+      }
     }
 
     const replySubject = replyContext.subject.startsWith("Re:")

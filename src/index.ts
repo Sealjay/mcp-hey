@@ -542,7 +542,8 @@ const tools: Tool[] = [
   },
   {
     name: "hey_reply",
-    description: "Reply to an email thread",
+    description:
+      "Reply to an email thread. By default the reply goes to the other thread participants. Pass `to` (and optionally `cc`) to override the recipient line, mirroring Hey's web UI when chasing a thread you started.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -553,6 +554,18 @@ const tools: Tool[] = [
         body: {
           type: "string",
           description: "Reply body content (HTML supported)",
+        },
+        to: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Optional override of the To: line. Use this when chasing a thread where you sent the most recent message, so the chase lands on the original recipient instead of looping back to your own address.",
+        },
+        cc: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Optional CC override. Only honoured when `to` is also provided.",
         },
       },
       required: ["thread_id", "body"],
@@ -1194,6 +1207,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "hey_reply": {
         const threadId = validateId(args?.thread_id)
         const body = args?.body as string
+        const to = args?.to as unknown
+        const cc = args?.cc as unknown
 
         if (!threadId) {
           return {
@@ -1212,7 +1227,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
-        result = await replyToEmail({ threadId, body: body.trim() })
+
+        if (to !== undefined) {
+          if (!Array.isArray(to) || !to.every((e) => typeof e === "string")) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Error: to must be an array of email address strings",
+                },
+              ],
+              isError: true,
+            }
+          }
+        }
+
+        if (cc !== undefined) {
+          if (!Array.isArray(cc) || !cc.every((e) => typeof e === "string")) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Error: cc must be an array of email address strings",
+                },
+              ],
+              isError: true,
+            }
+          }
+        }
+
+        result = await replyToEmail({
+          threadId,
+          body: body.trim(),
+          to: to as string[] | undefined,
+          cc: cc as string[] | undefined,
+        })
         break
       }
 

@@ -394,22 +394,27 @@ Send a new email.
 
 ### hey_reply
 
-Reply to an email thread.
+Reply to an email thread. By default the reply goes to the other thread participants. Pass `to` (and optionally `cc`) to override the recipient line, mirroring Hey's web UI behaviour when chasing a thread you started.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | thread_id | string | **Yes** | - | The thread/topic ID to reply to |
 | body | string | **Yes** | - | Reply body content (HTML supported) |
+| to | string[] | No | thread participants minus caller | Override the To: line. Use this when chasing a thread where you sent the most recent message, so the chase lands on the original recipient instead of looping back to your own address. |
+| cc | string[] | No | - | Optional CC override. Only honoured when `to` is also provided. |
 
 **Returns:**
 ```json
 {
-  "success": true
+  "success": true,
+  "messageId": "12345"
 }
 ```
 
-> **Implementation**: Two-step process -- creates a draft via `POST /entries/{id}/replies`, then sends via `PATCH /messages/{draftId}` with Turbo Stream headers and `_method=patch`.
+If the thread has no other detectable participant (e.g. the caller is the only sender so far) and no `to` override is supplied, the tool returns `{ success: false, error: "Could not determine reply recipient..." }` rather than silently posting a topic entry that never leaves Hey.
+
+> **Implementation**: Two-step process -- creates a draft via `POST /entries/{id}/replies`, then sends via `PATCH /messages/{draftId}` with Turbo Stream headers and `_method=patch`. When `to` is supplied it is passed to Hey verbatim as `entry[addressed][directly][]`, replacing the auto-detected participants.
 
 ---
 
