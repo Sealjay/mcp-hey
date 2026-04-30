@@ -274,145 +274,61 @@ function extractEmailsFromHtml(html: string): Email[] {
       })
     }
 
-    // Fallback for screener page: extract clearance entries from article elements
-    // Hey.com screener page structure (from browser inspection):
-    // <article>
-    //   <button>
-    //     <img alt="sender@email.com">
-    //     <h2>sender@email.com <sender@email.com></h2>  <!-- SENDER EMAIL -->
-    //     <div>Subject Line</div>
-    //     <div>– Snippet text...</div>
-    //   </button>
-    //   <a href="/contacts/...">recipient@email.com</a>  <!-- IGNORE: this is the user -->
-    //   <form action="/clearances/{id}">
-    //     <input type="hidden" value="patch">
-    //     <input type="hidden" value="approved">
-    //     <!-- or clearance ID in a hidden input -->
-    //   </form>
+    // Screener page: extract clearance entries from article.clearance elements.
+    // The screener DOM uses a different structure than the imbox posting list.
+    // <article id="clearance_{id}" class="clearance" data-clearance-id="{id}">
+    //   <h3 class="clearance__sender">
+    //     <span id="name_clearance_{id}">Sender Name</span>
+    //     <span class="clearance__email"><span>&lt;</span>sender@email.com<span>&gt;</span></span>
+    //   </h3>
+    //   <span class="clearance__subject">Subject</span>
+    //   <span> – Snippet...</span>
+    //   <time datetime="...">...</time>
     // </article>
-    if (emails.length === 0) {
-      const articles = root.querySelectorAll("article")
+    const clearanceArticles = root.querySelectorAll("article.clearance")
 
-      for (const article of articles) {
-        // Look for the heading with the "email <email>" pattern - this is the SENDER
-        const headings = article.querySelectorAll("h1, h2, h3, h4, h5, h6")
-        let fromEmail = ""
-        let from = ""
+    for (const article of clearanceArticles) {
+      const clearanceId =
+        article.getAttribute("data-clearance-id") ||
+        article.getAttribute("id")?.replace(/^clearance_/, "") ||
+        ""
+      if (!clearanceId) continue
 
-        for (const heading of headings) {
-          const headingText = heading.text?.trim() || ""
-          // Match "email <email>" pattern
-          const emailPattern =
-            /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\s*<([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})>/
-          const emailMatch = headingText.match(emailPattern)
-          if (emailMatch) {
-            fromEmail = emailMatch[2] || emailMatch[1]
-            from = fromEmail.split("@")[0]
-            break
-          }
+      const nameEl = article.querySelector(".clearance__sender .hdg")
+      const from = nameEl?.text?.trim() || ""
+
+      const emailEl = article.querySelector(".clearance__email")
+      const emailText = emailEl?.text?.trim() || ""
+      // Strip surrounding angle brackets and whitespace
+      const fromEmail = emailText.replace(/[<>\s ]/g, "")
+
+      const subjectEl = article.querySelector(".clearance__subject")
+      const subject = subjectEl?.text?.trim() || "(Screener entry)"
+
+      // Snippet is the sibling span after the subject inside .clearance__detail
+      let snippet = ""
+      const detailEl = article.querySelector(".clearance__detail")
+      if (detailEl) {
+        const detailText = detailEl.text?.trim() || ""
+        const dashIndex = detailText.indexOf("–")
+        if (dashIndex !== -1) {
+          snippet = detailText.slice(dashIndex + 1).trim()
         }
-
-        // If no heading match, try the image alt attribute (also contains sender email)
-        if (!fromEmail) {
-          const img = article.querySelector("img[alt*='@']")
-          const imgAlt = img?.getAttribute("alt") || ""
-          const imgEmailMatch = imgAlt.match(
-            /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/,
-          )
-          if (imgEmailMatch) {
-            fromEmail = imgEmailMatch[1]
-            from = fromEmail.split("@")[0]
-          }
-        }
-
-        if (!fromEmail) continue // No sender email found, skip this article
-
-        // Find clearance ID - try form action first, then hidden inputs
-        let clearanceId = ""
-        const forms = article.querySelectorAll("form")
-        for (const form of forms) {
-          const action = form.getAttribute("action") || ""
-          const actionMatch = action.match(/\/clearances\/(\d+)/)
-          if (actionMatch) {
-            clearanceId = actionMatch[1]
-            break
-          }
-          // Also check hidden inputs for clearance ID (numeric value that's not "patch"/"approved"/"denied")
-          const hiddenInputs = form.querySelectorAll("input[type='hidden']")
-          for (const input of hiddenInputs) {
-            const value = input.getAttribute("value") || ""
-            if (/^\d{5,}$/.test(value)) {
-              // Looks like a clearance ID (long numeric)
-              clearanceId = value
-              break
-            }
-          }
-          if (clearanceId) break
-        }
-
-        if (!clearanceId) continue // No clearance ID found, skip
-
-        // Extract subject and snippet from article text
-        // Get all text, then look for content after the email heading
-        const articleText = article.text || ""
-
-        // Find the subject - it's the line after the email, before the dash
-        // Skip button text like "Yes", "No", "Screen in", etc.
-        const lines = articleText
-          .split(/\n/)
-          .map((l) => l.trim())
-          .filter((l) => l)
-        let subject = "(Screener entry)"
-        let snippet = ""
-
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i]
-          // Skip the email header line
-          if (line.includes(fromEmail)) continue
-          // Skip button/action text
-          if (/^(Yes|No|Screen\s+(in|out)|Done|Clear)/i.test(line)) continue
-          // Skip recipient email links
-          if (/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(line))
-            continue
-          // Skip dates
-          if (
-            /^(January|February|March|April|May|June|July|August|September|October|November|December)/i.test(
-              line,
-            )
-          )
-            continue
-          // Skip navigation items
-          if (/^(Imbox|The Feed|Paper Trail|Reply Later|Set Aside)/i.test(line))
-            continue
-
-          // This might be the subject line
-          if (line.startsWith("–")) {
-            // This is the snippet
-            snippet = line.slice(1).trim()
-          } else if (
-            line.length > 10 &&
-            !line.includes("Screen") &&
-            !line.includes("options for")
-          ) {
-            subject = line
-            // Look for snippet in next line
-            if (i + 1 < lines.length && lines[i + 1].startsWith("–")) {
-              snippet = lines[i + 1].slice(1).trim()
-            }
-            break
-          }
-        }
-
-        emails.push({
-          id: clearanceId,
-          clearanceId,
-          from,
-          fromEmail,
-          subject,
-          snippet,
-          unread: true,
-        })
       }
+
+      const timeEl = article.querySelector("time[datetime]")
+      const date = timeEl?.getAttribute("datetime") || undefined
+
+      emails.push({
+        id: clearanceId,
+        clearanceId,
+        from: from || fromEmail.split("@")[0] || "Unknown",
+        fromEmail: fromEmail || undefined,
+        subject,
+        snippet,
+        date,
+        unread: true,
+      })
     }
 
     return emails
