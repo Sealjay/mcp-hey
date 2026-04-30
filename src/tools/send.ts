@@ -450,16 +450,180 @@ export interface ReplyParams {
   cc?: string[]
 }
 
-interface ReplyContext {
+export interface ThreadEntry {
+  entryId?: string
+  senderEmail?: string
+  date?: string // ISO datetime if available, else falls back to position
+}
+
+export interface ReplyContext {
   entryId: string
   subject: string
   participantEmails: string[]
+  // Email of the sender of the most recent entry that was NOT sent by the user.
+  // Used as the primary recipient for replies so we don't accidentally email ourselves.
+  latestNonSelfSenderEmail?: string
+}
+
+/**
+ * Extract every entry in the thread page along with its sender email and date,
+ * in DOM order (which mirrors the chronological order Hey renders).
+ *
+ * Hey's thread page contains one outer wrapper per email (typically
+ * article.entry / article.posting / [data-entry-id] / message-content[data-entry-id]).
+ * Each wrapper has an avatar with alt="Name <email@example.com>" and a
+ * <time datetime="..."> element. The selectors below are intentionally broad
+ * because Hey's markup has shifted over time and we need to be tolerant.
+ */
+export function extractThreadEntries(
+  root: ReturnType<typeof parseHtml>,
+): ThreadEntry[] {
+  const entries: ThreadEntry[] = []
+  const seenEntryIds = new Set<string>()
+
+  // Candidate entry wrappers, in priority order. Any wrapper that yields a
+  // sender email is good enough; later candidates fill in gaps.
+  const wrapperSelectors = [
+    "article.entry",
+    "article.posting",
+    "article[data-entry-id]",
+    "[data-entry-id]",
+    "message-content[data-entry-id]",
+  ]
+
+  for (const selector of wrapperSelectors) {
+    for (const wrapper of root.querySelectorAll(selector)) {
+      const rawEntryId =
+        wrapper.getAttribute("data-entry-id") ??
+        wrapper.getAttribute("data-identifier") ??
+        ""
+      const entryId = rawEntryId.replace(/^(entry_|posting_)/, "") || undefined
+
+      // De-duplicate: a single email can be matched by multiple selectors
+      // (e.g. article.entry[data-entry-id] and message-content[data-entry-id]).
+      if (entryId && seenEntryIds.has(entryId)) {
+        continue
+      }
+
+      // Sender email comes from any avatar inside the wrapper whose alt
+      // contains "<email>". Fall back to a direct img[alt*='@'] match.
+      let senderEmail: string | undefined
+      const avatarEls = wrapper.querySelectorAll(
+        ".avatar, img.avatar, [class*='avatar'], img[alt*='@']",
+      )
+      for (const avatar of avatarEls) {
+        const alt = avatar.getAttribute("alt") ?? ""
+        const match =
+          alt.match(/<([^>\s]+@[^>\s]+)>/) ??
+          alt.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/)
+        if (match) {
+          senderEmail = match[1].toLowerCase()
+          break
+        }
+      }
+
+      if (!senderEmail) {
+        // No sender email on this wrapper - skip it; we only care about
+        // entries we can attribute to a specific sender.
+        continue
+      }
+
+      // Date from the first time element inside the wrapper (datetime attr
+      // preferred; fall back to text content).
+      const timeEl = wrapper.querySelector("time")
+      const date =
+        timeEl?.getAttribute("datetime") ?? timeEl?.text?.trim() ?? undefined
+
+      if (entryId) {
+        seenEntryIds.add(entryId)
+      }
+      entries.push({ entryId, senderEmail, date })
+    }
+  }
+
+  return entries
+}
+
+/**
+ * Pick the latest entry whose sender is NOT the user themselves.
+ *
+ * Order of preference:
+ *   1. Highest ISO datetime among non-self entries.
+ *   2. Falling back to last DOM-order non-self entry (Hey renders newest
+ *      last in the unfurled thread view).
+ */
+export function findLatestNonSelfSender(
+  entries: ThreadEntry[],
+  selfEmail: string,
+): string | undefined {
+  const selfLower = selfEmail.toLowerCase()
+  const nonSelf = entries.filter(
+    (e) => e.senderEmail && e.senderEmail !== selfLower,
+  )
+  if (nonSelf.length === 0) {
+    return undefined
+  }
+
+  // Try to sort by ISO datetime when available. Entries without a parseable
+  // date keep their DOM order.
+  let best: ThreadEntry | undefined
+  let bestTs: number | undefined
+
+  for (const entry of nonSelf) {
+    const ts = entry.date ? Date.parse(entry.date) : Number.NaN
+    if (!Number.isNaN(ts)) {
+      if (bestTs === undefined || ts > bestTs) {
+        best = entry
+        bestTs = ts
+      }
+    }
+  }
+
+  if (best?.senderEmail) {
+    return best.senderEmail
+  }
+
+  // No parseable dates - take the last non-self entry in DOM order.
+  return nonSelf[nonSelf.length - 1].senderEmail
+}
+
+/**
+ * Resolve who a reply should be addressed to, combining the explicit `to`
+ * override with smart auto-detection from the thread.
+ *
+ * Returns the trimmed list of recipient emails, or an empty array if neither
+ * the override nor the auto-detection produced anything addressable. Callers
+ * should treat an empty result as a hard error - falling back to the user's
+ * own address would silently mail the reply to themselves.
+ */
+export function resolveReplyRecipients(opts: {
+  toOverride: string[] | undefined
+  replyContext: ReplyContext
+  selfEmail: string
+}): string[] {
+  const { toOverride, replyContext, selfEmail } = opts
+
+  if (toOverride && toOverride.length > 0) {
+    return toOverride.map((email) => email.trim())
+  }
+
+  if (replyContext.latestNonSelfSenderEmail) {
+    return [replyContext.latestNonSelfSenderEmail]
+  }
+
+  const selfLower = selfEmail.toLowerCase()
+  return replyContext.participantEmails.filter(
+    (email) => email.toLowerCase() !== selfLower,
+  )
 }
 
 /**
  * Extract reply context from a thread page: entry ID, subject, and participant emails.
  */
-async function getReplyContext(threadId: string): Promise<ReplyContext> {
+async function getReplyContext(
+  threadId: string,
+  selfEmail: string,
+): Promise<ReplyContext> {
   const html = await heyClient.fetchHtml(`/topics/${threadId}`)
   const root = parseHtml(html)
 
@@ -501,18 +665,43 @@ async function getReplyContext(threadId: string): Promise<ReplyContext> {
     subject = titleEl.text.replace(/\s*[-–—]\s*Hey\s*$/, "").trim()
   }
 
-  // Extract participant emails from avatar alt text: "Name <email@example.com>"
+  // Walk every entry in the thread, collecting per-entry sender info.
+  const threadEntries = extractThreadEntries(root)
+  const latestNonSelfSenderEmail = findLatestNonSelfSender(
+    threadEntries,
+    selfEmail,
+  )
+
+  // Participant emails: union of every distinct sender we saw, plus a
+  // page-wide avatar sweep so we still expose CC/bcc faces even when an
+  // entry-level avatar is missing.
   const participantEmails: string[] = []
-  for (const avatar of root.querySelectorAll("img.avatar")) {
+  for (const entry of threadEntries) {
+    if (entry.senderEmail && !participantEmails.includes(entry.senderEmail)) {
+      participantEmails.push(entry.senderEmail)
+    }
+  }
+  for (const avatar of root.querySelectorAll(
+    ".avatar, img.avatar, [class*='avatar']",
+  )) {
     const alt = avatar.getAttribute("alt") ?? ""
-    const emailMatch = alt.match(/<([^>]+@[^>]+)>/)
-    if (emailMatch && !participantEmails.includes(emailMatch[1])) {
-      participantEmails.push(emailMatch[1])
+    const match = alt.match(/<([^>\s]+@[^>\s]+)>/)
+    if (match) {
+      const email = match[1].toLowerCase()
+      if (!participantEmails.includes(email)) {
+        participantEmails.push(email)
+      }
     }
   }
 
-  debugLog("Reply context", { entryId, subject, participantEmails })
-  return { entryId, subject, participantEmails }
+  debugLog("Reply context", {
+    entryId,
+    subject,
+    participantEmails,
+    latestNonSelfSenderEmail,
+    threadEntryCount: threadEntries.length,
+  })
+  return { entryId, subject, participantEmails, latestNonSelfSenderEmail }
 }
 
 export async function replyToEmail(params: ReplyParams): Promise<SendResult> {
@@ -549,9 +738,13 @@ export async function replyToEmail(params: ReplyParams): Promise<SendResult> {
   }
 
   try {
-    // Fetch thread context (entry ID, subject, participants)
-    const replyContext = await getReplyContext(threadId)
+    // Fetch account info first - we need the user's email to identify
+    // which entries in the thread are theirs vs the other participants'.
     const accountInfo = await getAccountInfo()
+    const replyContext = await getReplyContext(
+      threadId,
+      accountInfo.senderEmail,
+    )
 
     // Step 1: Create reply draft via POST to /entries/{entryId}/replies
     const draftFormData = new URLSearchParams()
@@ -617,21 +810,23 @@ export async function replyToEmail(params: ReplyParams): Promise<SendResult> {
     //   data-remote="true" data-turbo-frame="_top"
     // Recipients and subject are NOT pre-populated in the draft.
     //
-    // If `to` was passed in, honour it verbatim (mirrors Hey's web UI, which
-    // lets you change the To: line when chasing a thread you started).
-    // Otherwise reuse the thread participants minus the caller.
-    const recipientEmails =
-      toOverride && toOverride.length > 0
-        ? toOverride.map((email) => email.trim())
-        : replyContext.participantEmails.filter(
-            (e) => e.toLowerCase() !== accountInfo.senderEmail.toLowerCase(),
-          )
+    // Recipient policy:
+    //   1. If `to` override was passed in, honour it verbatim (mirrors Hey's
+    //      web UI, which lets you change the To: line when chasing a thread
+    //      you started).
+    //   2. Otherwise auto-detect: prefer the author of the most recent
+    //      non-self entry in the thread, then fall back to any other
+    //      participants we found.
+    //   3. If we still have nothing, surface the failure with an actionable
+    //      error rather than silently posting a topic entry that never
+    //      leaves Hey by addressing it back to the caller.
+    const recipientEmails = resolveReplyRecipients({
+      toOverride,
+      replyContext,
+      selfEmail: accountInfo.senderEmail,
+    })
 
     if (recipientEmails.length === 0) {
-      // The thread has no other participant we can detect (the caller is the
-      // only sender so far). Falling back to the caller's own address would
-      // post a topic entry that never leaves Hey, so we surface the failure
-      // and ask the caller to specify `to` explicitly.
       return {
         success: false,
         error:
