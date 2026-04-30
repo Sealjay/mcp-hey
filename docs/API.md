@@ -205,13 +205,20 @@ Get a single email message.
 
 #### GET /messages/{id}.text
 
-Get a single email message in RFC822 text format.
+Get a single email message in RFC822 text format. The response is a full
+multipart MIME source: any attachments are inlined as base64 (or
+quoted-printable) parts beneath the textual body. Calendar invites appear as
+`Content-Type: text/calendar` parts (often within `multipart/alternative`).
 
 | Parameter | Type | Location | Description |
 |-----------|------|----------|-------------|
 | `id` | string | path | Message ID |
 
-**Response:** Plain text email content
+**Response:** RFC822 plain text email source (headers + multipart body).
+
+> **Note**: Used by `hey_read_email` (for attachment metadata),
+> `hey_download_attachment` and `hey_get_calendar_invite`. Only `messageId`
+> route resolves; topic/posting/entry IDs are not valid here.
 
 ---
 
@@ -944,3 +951,4 @@ When a session expires, requests return a 302 redirect to `/sign_in`. The mcp-he
 | 2026-03 | Reply Step 2 requires `_method=patch` (Rails method override) -- without it, `POST /messages/{id}` returns 404 |
 | 2026-03 | Reply draft does not pre-populate recipients or subject -- both must be included in Step 2 PATCH |
 | 2026-03 | Draft send form discovered at `/topics/{threadId}/toolbar?expanded_draft={draftId}` (lazy-loaded Turbo Frame), not on main topic page |
+| 2026-04 | Documented that `GET /messages/{id}.text` returns multipart MIME including base64 attachments and `text/calendar` parts; surfaced via new `hey_download_attachment` and `hey_get_calendar_invite` tools |

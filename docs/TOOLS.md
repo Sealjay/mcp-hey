@@ -2,13 +2,13 @@
 
 This document provides detailed documentation for all MCP tools provided by mcp-hey.
 
-**Total Tools: 41**
+**Total Tools: 43**
 
 ---
 
 ## Table of Contents
 
-- [Reading Tools](#reading-tools) (15 tools)
+- [Reading Tools](#reading-tools) (17 tools)
 - [Search Tool](#search-tool) (1 tool)
 - [Sending Tools](#sending-tools) (3 tools)
 - [Organisation Tools](#organisation-tools) (21 tools)
@@ -295,7 +295,8 @@ List emails in a specific collection.
 
 ### hey_read_email
 
-Read the full content of an email by ID.
+Read the full content of an email by ID. Surface attachment metadata and
+parsed calendar invites alongside the body.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
@@ -316,13 +317,79 @@ Read the full content of an email by ID.
     "subject": "Meeting tomorrow",
     "body": "<p>Hi, just wanted to confirm...</p>",
     "date": "2024-01-15T10:30:00Z",
-    "threadId": "67890"
+    "threadId": "67890",
+    "attachments": [
+      { "id": "part-1", "filename": "agenda.pdf", "size": 12480, "mime": "application/pdf", "is_calendar": false },
+      { "id": "part-2", "filename": "invite.ics", "size": 1842, "mime": "text/calendar", "is_calendar": true }
+    ],
+    "calendar_invites": [
+      { "id": "part-2", "filename": "invite.ics", "summary": "Lunch with Chris", "start": "2026-05-13T12:00:00Z", "end": "2026-05-13T13:00:00Z", "attendees": ["chris@example.com"] }
+    ]
   },
   "_cache": {...}
 }
 ```
 
+> **Attachments are metadata-only**. Use `hey_download_attachment` to write
+> the bytes to disk or `hey_get_calendar_invite` to fetch the parsed invite.
+> When the response is served from cache, `attachments` and
+> `calendar_invites` may be omitted; pass `force_refresh: true` to populate.
+
 > **Paper Trail Bundles**: Some Paper Trail emails (transactional emails from high-volume senders like banks, Wise, Amazon) are grouped into "bundles". These have only a `postingId` (no `topicId`). The tool automatically tries the bundle endpoint when needed.
+
+---
+
+### hey_download_attachment
+
+Download a single attachment from an email and save it to disk. Decodes
+the base64 MIME part and writes raw bytes to the supplied path.
+
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| email_id | string | **Yes** | - | The email ID containing the attachment |
+| attachment_id | string | **Yes** | - | The `id` from `hey_read_email`'s `attachments` array (e.g. `part-1`) |
+| save_path | string | No | `~/Downloads/hey-attachments/<email_id>/<filename>` | Absolute path or directory. Trailing `/` is treated as a directory. |
+
+**Returns:**
+```json
+{
+  "local_path": "/Users/me/Downloads/hey-attachments/12345/agenda.pdf",
+  "filename": "agenda.pdf",
+  "size": 12480,
+  "mime": "application/pdf"
+}
+```
+
+---
+
+### hey_get_calendar_invite
+
+Extract and parse a calendar invite (`.ics`) from an email.
+
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| email_id | string | **Yes** | - | The email ID containing the invite |
+| attachment_id | string | No | first calendar part | Use when the email has multiple `.ics` parts |
+
+**Returns:**
+```json
+{
+  "title": "Lunch with Chris",
+  "start": "2026-05-13T12:00:00Z",
+  "end": "2026-05-13T13:00:00Z",
+  "location": "Food at 52",
+  "attendees": ["chris@example.com", "guest@example.com"],
+  "organizer": "organiser@example.com",
+  "description": "Bring an appetite.",
+  "raw_ics": "BEGIN:VCALENDAR\nVERSION:2.0\n..."
+}
+```
+
+> Parses SUMMARY, DTSTART, DTEND, LOCATION, ORGANIZER, DESCRIPTION and
+> ATTENDEE properties from the first VEVENT. Timezone parameters and RRULE
+> expansion are not interpreted - check `raw_ics` if you need them.
 
 ---
 

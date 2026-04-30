@@ -14,6 +14,11 @@ import {
   needsRefresh,
 } from "../cache"
 import { heyClient } from "../hey-client"
+import {
+  type AttachmentMeta,
+  type CalendarInviteMeta,
+  listAttachmentsForEmail,
+} from "./attachments"
 
 export interface Email {
   id: string // Primary ID (topic ID when available, otherwise best available)
@@ -29,6 +34,13 @@ export interface Email {
   bubbledUp?: boolean
   label?: string
   clearanceId?: string // For screener entries
+  /**
+   * Best-effort count of attachments for this email, derived from list HTML
+   * indicators only (no extra network calls). Undefined when the listing
+   * does not surface an attachment hint. 0 means "no indicator seen", which
+   * is not a guarantee of zero attachments.
+   */
+  attachmentCount?: number
 }
 
 export interface ImboxSummary {
@@ -49,6 +61,10 @@ export interface EmailDetail {
   body: string
   date?: string
   threadId?: string
+  /** Attachment metadata only - no inline base64. Empty array when none. */
+  attachments?: AttachmentMeta[]
+  /** Calendar invites parsed from .ics attachments. */
+  calendar_invites?: CalendarInviteMeta[]
 }
 
 export interface ListOptions {
@@ -71,6 +87,53 @@ export interface Collection {
 export interface SearchOptions {
   limit?: number
   forceRefresh?: boolean
+}
+
+/**
+ * Count attachment indicators within a listing entry. This is a cheap probe
+ * intended to avoid round-tripping every email body for triage purposes.
+ *
+ * Returned semantics:
+ *   - undefined  → list HTML did not contain a recognised indicator slot
+ *   - 0          → indicator slot present, no attachments
+ *   - n          → n attachments signalled by the indicator
+ */
+function extractAttachmentCount(entry: HTMLElement): number | undefined {
+  // 1. Explicit data attribute, when Hey emits one.
+  const dataAttr =
+    entry.getAttribute("data-has-attachments") ||
+    entry.getAttribute("data-attachment-count")
+  if (dataAttr) {
+    const n = Number.parseInt(dataAttr, 10)
+    if (!Number.isNaN(n)) return n
+    if (dataAttr === "true") return 1
+    if (dataAttr === "false") return 0
+  }
+
+  // 2. Class-based hint on the posting itself.
+  const classAttr = entry.getAttribute("class") || ""
+  if (
+    /(?:^|\s)(?:posting--has-attachment|has-attachments?)(?:$|\s)/i.test(
+      classAttr,
+    )
+  ) {
+    return 1
+  }
+
+  // 3. Look for paperclip-style icons or attachment badges. We treat any
+  // attachment-flavoured node inside the entry as a single attachment unless
+  // a numeric badge is also present.
+  const indicator =
+    entry.querySelector(".posting__attachment, .posting__paperclip") ||
+    entry.querySelector("[class*='attachment'], [aria-label*='attachment' i]")
+  if (!indicator) return undefined
+
+  const badgeText = indicator.text?.trim() || ""
+  const badgeMatch = badgeText.match(/(\d+)/)
+  if (badgeMatch) {
+    return Number.parseInt(badgeMatch[1], 10)
+  }
+  return 1
 }
 
 function extractEmailsFromHtml(html: string): Email[] {
@@ -188,6 +251,12 @@ function extractEmailsFromHtml(html: string): Email[] {
       const labelEl = entry.querySelector(".posting__inbox-pill, .inbox-pill")
       const label = labelEl?.text?.trim()
 
+      // Best-effort attachment-indicator detection. Hey lists do not
+      // explicitly expose attachment counts, but rendered postings sometimes
+      // surface a paperclip icon or `data-has-attachments` attribute. We
+      // look for the most-likely indicators without fetching message bodies.
+      const attachmentCount = extractAttachmentCount(entry)
+
       emails.push({
         id,
         topicId,
@@ -201,6 +270,7 @@ function extractEmailsFromHtml(html: string): Email[] {
         unread,
         bubbledUp,
         label,
+        attachmentCount,
       })
     }
 
@@ -902,6 +972,21 @@ export async function readEmail(
   }
 
   const email = extractEmailDetail(content, id, isRawText)
+
+  // Probe for attachments via the raw .text endpoint. Failures (e.g. the
+  // message id is a topic id where .text is unavailable) are swallowed: the
+  // attachments arrays are simply omitted in that case. Calendar invites
+  // are surfaced separately for triage - the body remains attachment-free.
+  try {
+    const probe = await listAttachmentsForEmail(id)
+    email.attachments = probe.attachments
+    email.calendar_invites = probe.calendar_invites
+  } catch (err) {
+    console.error(
+      `[mcp-hey] Attachment probe failed for ${id}:`,
+      (err as Error).message,
+    )
+  }
 
   // Update cache
   cacheEmailDetail(email)

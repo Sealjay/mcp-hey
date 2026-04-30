@@ -17,6 +17,7 @@ import {
 } from "./cache"
 import { sanitiseError } from "./errors"
 import { heyClient } from "./hey-client"
+import { downloadAttachment, getCalendarInvite } from "./tools/attachments"
 import {
   type BubbleUpSlot,
   addLabel,
@@ -125,6 +126,32 @@ function validateEmail(value: unknown): string | null {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
     return null
   }
+  return trimmed
+}
+
+/**
+ * Validate an attachment id, e.g. "part-1". The format is fixed by
+ * listAttachmentsForEmail; we accept the same shape here.
+ */
+function validateAttachmentId(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  if (trimmed.length === 0 || trimmed.length > 64) return null
+  if (!/^part-\d+$/.test(trimmed)) return null
+  return trimmed
+}
+
+/**
+ * Validate an attachment save path. We accept any non-empty string under
+ * 1024 chars and let downloadAttachment resolve `~` expansion. Returning
+ * `null` indicates the caller supplied a value that is not a string;
+ * `undefined` is reserved for "use the default".
+ */
+function validateSavePath(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  if (trimmed.length === 0 || trimmed.length > 1024) return null
   return trimmed
 }
 
@@ -466,7 +493,7 @@ const tools: Tool[] = [
   {
     name: "hey_read_email",
     description:
-      "Read the full content of an email by ID. Returns cached content unless force_refresh=true.",
+      "Read the full content of an email by ID. Returns cached content unless force_refresh=true. Response includes `attachments` (metadata only - id, filename, size, mime, is_calendar) and `calendar_invites` (parsed .ics summaries) when present. Use hey_download_attachment or hey_get_calendar_invite to retrieve content.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -485,6 +512,51 @@ const tools: Tool[] = [
         },
       },
       required: ["id"],
+    },
+  },
+  {
+    name: "hey_download_attachment",
+    description:
+      "Download a single attachment from an email and save it to disk. Decodes the base64-encoded MIME part and writes it to the supplied path (or ~/Downloads/hey-attachments/<email_id>/<filename> by default). Use the attachment_id from hey_read_email's `attachments` array.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        email_id: {
+          type: "string",
+          description: "The email ID containing the attachment",
+        },
+        attachment_id: {
+          type: "string",
+          description:
+            "The attachment ID from hey_read_email's attachments array (e.g. 'part-1')",
+        },
+        save_path: {
+          type: "string",
+          description:
+            "Optional absolute path or directory to save into. Defaults to ~/Downloads/hey-attachments/<email_id>/<filename>. Trailing '/' is treated as a directory.",
+        },
+      },
+      required: ["email_id", "attachment_id"],
+    },
+  },
+  {
+    name: "hey_get_calendar_invite",
+    description:
+      "Extract and parse a calendar invite (.ics) from an email. Returns title, start, end, location, attendees, organizer and the raw ICS body. When an email has multiple .ics parts, supply attachment_id; otherwise the first calendar part is used.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        email_id: {
+          type: "string",
+          description: "The email ID containing the calendar invite",
+        },
+        attachment_id: {
+          type: "string",
+          description:
+            "Optional attachment ID when the email has multiple .ics parts",
+        },
+      },
+      required: ["email_id"],
     },
   },
   {
@@ -1162,6 +1234,85 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
         result = await readEmail(id, format, forceRefresh)
+        break
+      }
+      case "hey_download_attachment": {
+        const emailId = validateId(args?.email_id)
+        const attachmentId = validateAttachmentId(args?.attachment_id)
+        const savePath = validateSavePath(args?.save_path)
+        if (!emailId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: email_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        if (!attachmentId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: attachment_id is required (e.g. 'part-1' from hey_read_email)",
+              },
+            ],
+            isError: true,
+          }
+        }
+        if (savePath === null) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: save_path must be a non-empty string under 1024 chars",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await downloadAttachment({
+          emailId,
+          attachmentId,
+          savePath,
+        })
+        break
+      }
+      case "hey_get_calendar_invite": {
+        const emailId = validateId(args?.email_id)
+        const attachmentIdRaw = args?.attachment_id
+        const attachmentId =
+          attachmentIdRaw === undefined
+            ? undefined
+            : validateAttachmentId(attachmentIdRaw)
+        if (!emailId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: email_id is required and must be valid",
+              },
+            ],
+            isError: true,
+          }
+        }
+        if (attachmentIdRaw !== undefined && !attachmentId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: attachment_id must be a valid id (e.g. 'part-1')",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await getCalendarInvite({
+          emailId,
+          attachmentId: attachmentId ?? undefined,
+        })
         break
       }
       case "hey_search": {
