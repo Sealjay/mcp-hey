@@ -590,6 +590,26 @@ export async function screenInById(
   }
 }
 
+export async function moveTopicToPaperTrail(
+  topicId: string,
+): Promise<OrganiseResult> {
+  if (!topicId) {
+    return { success: false, error: "Topic ID is required" }
+  }
+
+  try {
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/topics/${topicId}/status/paper_trail`),
+    )
+
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("paper_trail", topicId),
+    )
+  } catch (err) {
+    return { success: false, error: toUserError(err) }
+  }
+}
+
 export async function addToCollection(
   topicId: string,
   collectionId: string,

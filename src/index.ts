@@ -28,6 +28,7 @@ import {
   markAsNotSpam,
   markAsSpam,
   markAsUnseen,
+  moveTopicToPaperTrail,
   popBubble,
   removeFromCollection,
   removeFromReplyLater,
@@ -814,6 +815,21 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "hey_move_to_paper_trail",
+    description:
+      "Move an email thread to Paper Trail (automated/receipts section). Use for mailing list or automated emails that have been fully processed.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: {
+          type: "string",
+          description: "The topic/thread ID to move to Paper Trail",
+        },
+      },
+      required: ["id"],
+    },
+  },
+  {
     name: "hey_spam",
     description: "Mark an email thread as Spam",
     inputSchema: {
@@ -1592,6 +1608,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
         result = await restoreFromTrash(id)
+        break
+      }
+      case "hey_move_to_paper_trail": {
+        const id = validateId(args?.id)
+        if (!id) {
+          return {
+            content: [
+              { type: "text", text: "Error: id is required and must be valid" },
+            ],
+            isError: true,
+          }
+        }
+        result = await moveTopicToPaperTrail(id)
         break
       }
       case "hey_spam": {

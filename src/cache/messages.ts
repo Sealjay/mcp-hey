@@ -421,7 +421,8 @@ export function invalidateForAction(
     | "mute"
     | "unmute"
     | "collection"
-    | "label",
+    | "label"
+    | "paper_trail",
   messageId?: string,
 ): void {
   const now = unixNow()
@@ -519,6 +520,16 @@ export function invalidateForAction(
       }
       // Invalidate all folders since labels can span across views
       execute("UPDATE sync_state SET requires_full_sync = 1")
+      break
+
+    case "paper_trail":
+      if (messageId) {
+        execute("UPDATE messages SET cached_at = 0 WHERE id = ?", [messageId])
+      }
+      // Invalidate imbox (source) and paper_trail (destination)
+      execute(
+        "UPDATE sync_state SET requires_full_sync = 1 WHERE folder IN ('imbox', 'paper_trail')",
+      )
       break
   }
 
