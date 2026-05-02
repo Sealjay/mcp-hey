@@ -165,11 +165,20 @@ async function getAccountInfo(): Promise<AccountInfo> {
     return accountInfo
   }
 
-  // Debug: Log HTML snippet on failure
-  debugLog(
-    "Failed to extract account info. HTML snippet:",
-    composeHtml.substring(0, 2000),
-  )
+  // Debug: Log structure only on failure — never log raw HTML (may contain auth tokens).
+  const tagNames = [
+    ...new Set(
+      (composeHtml.match(/<[a-z][a-z0-9]*/gi) ?? []).map((t) =>
+        t.toLowerCase(),
+      ),
+    ),
+  ]
+    .sort()
+    .join(", ")
+  debugLog("Failed to extract account info", {
+    htmlLength: composeHtml.length,
+    tagsFound: tagNames,
+  })
 
   throw new Error("Could not determine Hey.com account information")
 }

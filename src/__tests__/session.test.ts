@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import type { Cookie, Session } from "../session"
+import { existsSync } from "node:fs"
+import { type Cookie, type Session, resolvePython3 } from "../session"
 
 // Mock session data
 const mockCookies: Cookie[] = [
@@ -70,5 +71,17 @@ describe("Cookie Header Parsing", () => {
     const header = getCookieHeader(singleCookieSession)
 
     expect(header).toBe("test=value")
+  })
+})
+
+describe("resolvePython3", () => {
+  test("returns an absolute path (does not rely on bare PATH lookup at spawn time)", () => {
+    const pythonPath = resolvePython3()
+    expect(pythonPath).toStartWith("/")
+  })
+
+  test("returned path points to an existing file", () => {
+    const pythonPath = resolvePython3()
+    expect(existsSync(pythonPath)).toBe(true)
   })
 })

@@ -487,3 +487,50 @@ describe("Thread reply recipient resolution", () => {
     })
   })
 })
+
+describe("Debug log HTML sanitisation", () => {
+  // Regression guard: the failure-path debugLog must never emit raw attribute
+  // values from a Hey.com compose page (which can contain CSRF tokens, session
+  // IDs, and user PII).  We replicate the exact sanitisation logic here so a
+  // future refactor cannot accidentally revert to logging raw HTML.
+  function extractTagNames(html: string): string[] {
+    return [
+      ...new Set(
+        (html.match(/<[a-z][a-z0-9]*/gi) ?? []).map((t) => t.toLowerCase()),
+      ),
+    ].sort()
+  }
+
+  test("extracts tag names only — no attribute names or values", () => {
+    const sensitiveHtml = `
+      <form action="/messages" method="post">
+        <input type="hidden" name="authenticity_token" value="CSRF_TOKEN_SECRET">
+        <input type="hidden" name="acting_sender_id" value="12345">
+        <select name="acting_sender_id">
+          <option value="12345" selected>user@example.com</option>
+        </select>
+      </form>
+    `
+    const tags = extractTagNames(sensitiveHtml)
+
+    // Only tag names — never raw attribute values or sensitive strings
+    expect(tags).toEqual(["<form", "<input", "<option", "<select"])
+    for (const tag of tags) {
+      expect(tag).not.toContain("CSRF_TOKEN_SECRET")
+      expect(tag).not.toContain("authenticity_token")
+      expect(tag).not.toContain("user@example.com")
+      expect(tag).not.toContain("12345")
+    }
+  })
+
+  test("handles empty HTML gracefully", () => {
+    const tags = extractTagNames("")
+    expect(tags).toEqual([])
+  })
+
+  test("de-duplicates repeated tags", () => {
+    const html = "<div><div><span></span></div></div>"
+    const tags = extractTagNames(html)
+    expect(tags).toEqual(["<div", "<span"])
+  })
+})

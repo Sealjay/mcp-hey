@@ -4,6 +4,28 @@ import { join } from "node:path"
 import { spawn } from "bun"
 import { AUTH_DIR, DATA_DIR } from "./paths"
 
+/**
+ * Resolve the absolute path to the python3 interpreter without relying on
+ * PATH at spawn time (which would be vulnerable to PATH-hijacking).
+ *
+ * We try a fixed list of well-known locations first, then fall back to
+ * Bun.which() (which still uses PATH but at least pre-resolves to an
+ * absolute path before the subprocess is spawned).
+ */
+export function resolvePython3(): string {
+  const knownPaths = ["/usr/bin/python3", "/usr/local/bin/python3"]
+  for (const p of knownPaths) {
+    if (existsSync(p)) return p
+  }
+  const resolved = Bun.which("python3")
+  if (!resolved) {
+    throw new Error(
+      "python3 not found; install Python 3 to use the Hey auth helper",
+    )
+  }
+  return resolved
+}
+
 const COOKIES_PATH = join(DATA_DIR, "hey-cookies.json")
 const AUTH_SCRIPT = join(AUTH_DIR, "hey-auth.py")
 
@@ -85,8 +107,9 @@ export async function validateSession(session: Session): Promise<boolean> {
 export async function runAuthHelper(): Promise<boolean> {
   console.error("[mcp-hey] Starting authentication helper...")
 
+  const pythonPath = resolvePython3()
   const proc = spawn({
-    cmd: ["python3", AUTH_SCRIPT],
+    cmd: [pythonPath, AUTH_SCRIPT],
     stdout: "inherit",
     stderr: "inherit",
   })
