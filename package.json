@@ -12,7 +12,7 @@
     "format": "bunx --bun biome check --write ."
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.25.2",
+    "@modelcontextprotocol/sdk": "1.26.0",
     "node-html-parser": "6.1.13"
   },
   "devDependencies": {
