@@ -1,13 +1,11 @@
 import { existsSync } from "node:fs"
 import { chmod, rename } from "node:fs/promises"
-import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { join } from "node:path"
 import { spawn } from "bun"
+import { AUTH_DIR, DATA_DIR } from "./paths"
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = join(__dirname, "..", "data")
 const COOKIES_PATH = join(DATA_DIR, "hey-cookies.json")
-const AUTH_SCRIPT = join(__dirname, "..", "auth", "hey-auth.py")
+const AUTH_SCRIPT = join(AUTH_DIR, "hey-auth.py")
 
 export interface Cookie {
   name: string

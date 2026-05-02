@@ -5,12 +5,10 @@
 
 import { Database } from "bun:sqlite"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
-import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { join } from "node:path"
+import { DATA_DIR } from "../paths"
 import { FTS_SCHEMA, INIT_SCHEMA, SCHEMA_VERSION } from "./schema"
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = join(__dirname, "..", "..", "data")
 const DB_PATH = join(DATA_DIR, "hey-cache.db")
 
 let db: Database | null = null
