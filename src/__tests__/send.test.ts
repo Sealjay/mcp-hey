@@ -224,7 +224,7 @@ describe("Thread reply recipient resolution", () => {
             <p>Hi Chris</p>
           </article>
           <article class="entry" data-entry-id="222">
-            <img class="avatar" alt="Chris Lloyd-Jones <chris@example.com>">
+            <img class="avatar" alt="Chris Example <chris@example.com>">
             <time datetime="2026-04-30T10:00:00Z">Today</time>
             <p>Reply from Chris</p>
           </article>
