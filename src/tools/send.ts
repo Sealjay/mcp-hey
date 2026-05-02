@@ -90,6 +90,9 @@ function findInvalidEmails(emails: string[]): string[] {
   return emails.filter((email) => !isValidEmail(email))
 }
 
+/** Maximum number of recipients across to/cc/bcc combined. */
+const MAX_RECIPIENTS = 50
+
 async function getAccountInfo(): Promise<AccountInfo> {
   // Return cached account info if available
   if (accountInfoCache.value) {
@@ -191,6 +194,15 @@ export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
     return { success: false, error: "At least one recipient is required" }
   }
 
+  // Cap total recipients to prevent abuse
+  const totalRecipients = to.length + (cc?.length ?? 0)
+  if (totalRecipients > MAX_RECIPIENTS) {
+    return {
+      success: false,
+      error: `Too many recipients (${totalRecipients}). Maximum is ${MAX_RECIPIENTS} across to/cc combined.`,
+    }
+  }
+
   // Validate recipient email formats
   const invalidTo = findInvalidEmails(to)
   if (invalidTo.length > 0) {
@@ -290,6 +302,15 @@ export async function forwardEmail(params: ForwardParams): Promise<SendResult> {
 
   if (to.length === 0) {
     return { success: false, error: "At least one recipient is required" }
+  }
+
+  // Cap total recipients to prevent abuse
+  const totalRecipients = to.length + (cc?.length ?? 0) + (bcc?.length ?? 0)
+  if (totalRecipients > MAX_RECIPIENTS) {
+    return {
+      success: false,
+      error: `Too many recipients (${totalRecipients}). Maximum is ${MAX_RECIPIENTS} across to/cc/bcc combined.`,
+    }
   }
 
   const invalidTo = findInvalidEmails(to)
@@ -709,6 +730,15 @@ export async function replyToEmail(params: ReplyParams): Promise<SendResult> {
 
   if (!body.trim()) {
     return { success: false, error: "Reply body is required" }
+  }
+
+  // Cap total recipients to prevent abuse
+  const totalRecipients = (toOverride?.length ?? 0) + (ccOverride?.length ?? 0)
+  if (totalRecipients > MAX_RECIPIENTS) {
+    return {
+      success: false,
+      error: `Too many recipients (${totalRecipients}). Maximum is ${MAX_RECIPIENTS} across to/cc combined.`,
+    }
   }
 
   if (toOverride !== undefined) {

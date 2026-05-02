@@ -468,9 +468,16 @@ function resolveSavePath(
   // If the caller pointed at a directory (trailing slash or no extension),
   // append the inferred filename.
   if (expanded.endsWith("/") || expanded.endsWith("\\")) {
-    return join(expanded, filename)
+    expanded = join(expanded, filename)
   }
-  return expanded
+
+  // Reject paths that resolve outside the user's home directory.
+  const resolved = resolve(expanded)
+  if (!resolved.startsWith(`${home}/`) && resolved !== home) {
+    throw new Error("Save path must be within the user's home directory")
+  }
+
+  return resolved
 }
 
 /**

@@ -164,10 +164,14 @@ class HeyAuth:
             "lastValidated": int(__import__("time").time() * 1000),
         }
 
-        with open(self.cookies_path, "w") as f:
+        # Atomic write: write to tmp, chmod, then rename to avoid a window
+        # where the file is world-readable.
+        tmp_path = self.cookies_path.with_suffix(".tmp")
+        with open(tmp_path, "w") as f:
             json.dump(session, f, indent=2)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, self.cookies_path)
 
-        os.chmod(self.cookies_path, 0o600)
         print(f"Saved {len(cookies)} cookies to {self.cookies_path}", file=sys.stderr)
 
     def save_cookies(self, cookie_string: str, url: str):
@@ -193,12 +197,13 @@ class HeyAuth:
             "lastValidated": int(__import__("time").time() * 1000),
         }
 
-        # Write to file
-        with open(self.cookies_path, "w") as f:
+        # Atomic write: write to tmp, chmod, then rename to avoid a window
+        # where the file is world-readable.
+        tmp_path = self.cookies_path.with_suffix(".tmp")
+        with open(tmp_path, "w") as f:
             json.dump(session, f, indent=2)
-
-        # Set file permissions to 600 (user read/write only)
-        os.chmod(self.cookies_path, 0o600)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, self.cookies_path)
 
         print(f"Saved {len(cookies)} cookies to {self.cookies_path}", file=sys.stderr)
 

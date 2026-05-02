@@ -33,5 +33,9 @@ export function sanitiseError(error: unknown): string {
     .replace(/https?:\/\/\S+/g, "[url]")
     .replace(/Bearer \S+/g, "[token]")
     .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "[email]")
-    .replace(/\/(?:home|Users|etc|var|tmp|root|opt|private)\/\S+/g, "[path]")
+    .replace(
+      /\/(?:home|Users|etc|var|tmp|root|opt|private|srv|run|proc)\/\S+/g,
+      "[path]",
+    )
+    .replace(/[A-Z]:\\\S+/g, "[path]")
 }
