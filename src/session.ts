@@ -66,6 +66,7 @@ export async function validateSession(session: Session): Promise<boolean> {
         Cookie: cookieHeader,
       },
       redirect: "manual",
+      signal: AbortSignal.timeout(5000),
     })
 
     // If we get redirected to sign_in, session is invalid

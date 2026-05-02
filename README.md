@@ -1,5 +1,6 @@
 # mcp-hey
 
+[![Sealjay/mcp-hey MCP server](https://glama.ai/mcp/servers/Sealjay/mcp-hey/badges/score.svg)](https://glama.ai/mcp/servers/Sealjay/mcp-hey)
 [![Bun](https://img.shields.io/badge/Bun-1.1+-000000?logo=bun&logoColor=ffffff)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=ffffff)](https://www.typescriptlang.org/)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=ffffff)](https://www.python.org/)
@@ -121,6 +122,24 @@ Add to `~/.cursor/mcp.json`:
 ```
 
 Restart Cursor.
+
+### Docker
+
+A Dockerfile is included for containerised deployments and Glama compatibility.
+
+**Build the image:**
+
+```bash
+docker build -t mcp-hey .
+```
+
+**Smoke-test the server** (should return a JSON-RPC response listing available tools):
+
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n' | docker run -i mcp-hey
+```
+
+> **Note:** The Docker image runs the MCP server only. The Python auth helper and webview login are not available inside the container. You must provide pre-existing session cookies via a volume mount to `data/hey-cookies.json` for authenticated operations.
 
 ### macOS: `bun` PATH
 
