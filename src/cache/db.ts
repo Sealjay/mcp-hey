@@ -3,7 +3,7 @@
  * Uses Bun's built-in SQLite for optimal performance.
  */
 
-import { Database } from "bun:sqlite"
+import { Database, type SQLQueryBindings } from "bun:sqlite"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { DATA_DIR } from "../paths"
@@ -193,7 +193,7 @@ function withRetry<T>(fn: () => T): T {
 /**
  * Execute a query with automatic database connection.
  */
-export function query<T>(sql: string, params?: unknown[]): T[] {
+export function query<T>(sql: string, params?: SQLQueryBindings[]): T[] {
   return withRetry(() => {
     const database = getDatabase()
     const stmt = database.query(sql)
@@ -204,7 +204,10 @@ export function query<T>(sql: string, params?: unknown[]): T[] {
 /**
  * Execute a single-row query.
  */
-export function queryOne<T>(sql: string, params?: unknown[]): T | null {
+export function queryOne<T>(
+  sql: string,
+  params?: SQLQueryBindings[],
+): T | null {
   return withRetry(() => {
     const database = getDatabase()
     const stmt = database.query(sql)
@@ -215,7 +218,7 @@ export function queryOne<T>(sql: string, params?: unknown[]): T | null {
 /**
  * Execute a write operation.
  */
-export function execute(sql: string, params?: unknown[]): void {
+export function execute(sql: string, params?: SQLQueryBindings[]): void {
   withRetry(() => {
     const database = getDatabase()
     const stmt = database.query(sql)
