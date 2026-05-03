@@ -438,7 +438,8 @@ const tools: Tool[] = [
   },
   {
     name: "hey_remove_label",
-    description: "Remove a label from an email thread",
+    description:
+      "Remove a label from an email thread. Idempotent — no error if the label is not currently applied. Returns {success, error?}. Use hey_list_labels to discover available label IDs.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -456,7 +457,8 @@ const tools: Tool[] = [
   },
   {
     name: "hey_add_to_collection",
-    description: "Add an email thread to a collection",
+    description:
+      "Add an email thread to a collection. Idempotent — no error if already present. Returns {success, error?}. Use hey_list_collections to find collection IDs.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -475,7 +477,8 @@ const tools: Tool[] = [
   },
   {
     name: "hey_remove_from_collection",
-    description: "Remove an email thread from a collection",
+    description:
+      "Remove an email thread from a collection. Idempotent — no error if not in the collection. Returns {success, error?}. Use hey_list_collections to find collection IDs.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -587,7 +590,8 @@ const tools: Tool[] = [
   // Sending tools
   {
     name: "hey_send_email",
-    description: "Send a new email",
+    description:
+      "Send a new email immediately (no draft stage). Returns {success, error?}. Use for standalone outbound messages; use hey_reply for thread responses, or hey_forward to share existing emails with new recipients.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -616,7 +620,7 @@ const tools: Tool[] = [
   {
     name: "hey_reply",
     description:
-      "Reply to an email thread. By default the reply goes to the other thread participants. Pass `to` (and optionally `cc`) to override the recipient line, mirroring Hey's web UI when chasing a thread you started.",
+      "Reply to an email thread. By default the reply goes to the other thread participants (your own address is automatically excluded). If you started the thread or sent the most recent message, pass `to` explicitly to avoid the reply failing with no valid recipients. Use hey_send_email for new standalone messages, or hey_forward to share content with third parties.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -647,7 +651,8 @@ const tools: Tool[] = [
 
   {
     name: "hey_forward",
-    description: "Forward an email to new recipients",
+    description:
+      "Forward an existing email to new recipients immediately. The original thread remains unchanged. Returns {success, error?}. Use instead of hey_send_email when sharing existing content; use hey_reply for responding within a thread.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -683,7 +688,8 @@ const tools: Tool[] = [
   // Organisation tools
   {
     name: "hey_set_aside",
-    description: "Move an email to Set Aside for later",
+    description:
+      "Move an email to Set Aside for later. Reversible via hey_unset_aside (requires posting_id from hey_list_set_aside). Returns {success, error?}. Use for emails you plan to revisit but want out of the Imbox.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -788,7 +794,8 @@ const tools: Tool[] = [
   },
   {
     name: "hey_trash",
-    description: "Move an email thread to Trash",
+    description:
+      "Move an email thread to Trash. Reversible via hey_restore. Returns {success, error?}. Use for emails to discard; use hey_spam for unsolicited mail, or hey_ignore_thread to mute without removing.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -831,7 +838,8 @@ const tools: Tool[] = [
   },
   {
     name: "hey_spam",
-    description: "Mark an email thread as Spam",
+    description:
+      "Mark an email thread as spam and move to spam folder. Reversible via hey_not_spam. Returns {success, error?}. Use for unsolicited mail; use hey_trash for mail you might revisit, or hey_ignore_thread to mute without removing.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -845,7 +853,8 @@ const tools: Tool[] = [
   },
   {
     name: "hey_not_spam",
-    description: "Mark an email thread as Not Spam (restore from spam folder)",
+    description:
+      "Restore an email thread from the spam folder back to inbox. Reversible via hey_spam. Returns {success, error?}. Different from hey_restore which recovers from trash, not spam.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -859,7 +868,8 @@ const tools: Tool[] = [
   },
   {
     name: "hey_mark_unseen",
-    description: "Mark an email thread as unseen/unread",
+    description:
+      "Mark a thread as unseen/unread to reset its read status. Returns {success, error?}. Reading the email via hey_read_email implicitly marks it as seen again.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -942,7 +952,8 @@ const tools: Tool[] = [
   },
   {
     name: "hey_ignore_thread",
-    description: "Ignore/mute a thread (stop receiving notifications)",
+    description:
+      "Mute a thread to stop receiving notifications (thread stays in inbox). Reversible via hey_unignore_thread. Returns {success, error?}. Use hey_trash to remove entirely, or hey_spam for unsolicited mail.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -972,7 +983,8 @@ const tools: Tool[] = [
   // Cache management tool
   {
     name: "hey_cache_status",
-    description: "Check cache freshness and statistics",
+    description:
+      "Get cache statistics including message counts, cache age, and storage estimate. Read-only with no side effects. Optionally query a specific folder for message/unread counts. Use before force_refresh decisions.",
     inputSchema: {
       type: "object" as const,
       properties: {
