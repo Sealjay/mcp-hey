@@ -1002,7 +1002,7 @@ const tools: Tool[] = [
 const server = new Server(
   {
     name: "mcp-hey",
-    version: "0.1.1",
+    version: "0.2.0",
   },
   {
     capabilities: {
