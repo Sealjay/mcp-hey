@@ -19,7 +19,8 @@ the full checklist, tags, pushes, and creates a GitHub release.
    - `bun run lint` must pass
    - `bun test` must pass
 
-4. **Version bump**: update the `version` field in `package.json`,
+4. **Version bump**: update the `version` field in both
+   `package.json` and `src/index.ts` (the `version` string in the `Server` constructor),
    then commit with message `chore: bump version to <MAJOR>.<MINOR>.<PATCH>`.
 
 5. **Tag and release**:

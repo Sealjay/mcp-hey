@@ -990,7 +990,7 @@ const tools: Tool[] = [
 const server = new Server(
   {
     name: "mcp-hey",
-    version: "0.1.0",
+    version: "0.1.1",
   },
   {
     capabilities: {
