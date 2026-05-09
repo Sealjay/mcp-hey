@@ -12,51 +12,74 @@ export interface OrganiseResult {
   error?: string
 }
 
-export async function setAside(entryId: string): Promise<OrganiseResult> {
-  if (!entryId) {
-    return { success: false, error: "Entry ID is required" }
+export async function setAside(id: string): Promise<OrganiseResult> {
+  if (!id) {
+    return { success: false, error: "ID is required" }
   }
 
   try {
-    const endpoints = [
-      `/topics/${entryId}/set_aside`,
-      `/entries/${entryId}/set_aside`,
-      `/topics/${entryId}/status/set_aside`,
-    ]
+    const boxId = await getBoxId("asidebox")
+    if (boxId) {
+      const response = await withCsrfRetry(() =>
+        heyClient.post(`/topics/${id}/moves?box_id=${boxId}`),
+      )
+      if (response.ok || response.status === 302) {
+        return organiseResponseToResult(response, () =>
+          invalidateForAction("set_aside", id),
+        )
+      }
+    }
 
     const response = await withCsrfRetry(() =>
-      tryEndpoints(endpoints, async (endpoint) => {
-        const post = await heyClient.post(endpoint)
-        if (post.ok || post.status === 302) return post
-        return heyClient.put(endpoint)
-      }),
+      tryEndpoints(
+        [
+          `/topics/${id}/set_aside`,
+          `/entries/${id}/set_aside`,
+          `/topics/${id}/status/set_aside`,
+        ],
+        async (endpoint) => {
+          const post = await heyClient.post(endpoint)
+          if (post.ok || post.status === 302) return post
+          return heyClient.put(endpoint)
+        },
+      ),
     )
 
     return organiseResponseToResult(response, () =>
-      invalidateForAction("set_aside", entryId),
+      invalidateForAction("set_aside", id),
     )
   } catch (err) {
     return { success: false, error: toUserError(err) }
   }
 }
 
-export async function replyLater(entryId: string): Promise<OrganiseResult> {
-  if (!entryId) {
-    return { success: false, error: "Entry ID is required" }
+export async function replyLater(id: string): Promise<OrganiseResult> {
+  if (!id) {
+    return { success: false, error: "ID is required" }
   }
 
   try {
-    const endpoints = [
-      `/entries/${entryId}/reply_later`,
-      `/topics/${entryId}/reply_later`,
-    ]
+    const boxId = await getBoxId("laterbox")
+    if (boxId) {
+      const response = await withCsrfRetry(() =>
+        heyClient.post(`/topics/${id}/moves?box_id=${boxId}`),
+      )
+      if (response.ok || response.status === 302) {
+        return organiseResponseToResult(response, () =>
+          invalidateForAction("reply_later", id),
+        )
+      }
+    }
 
     const response = await withCsrfRetry(() =>
-      tryEndpoints(endpoints, (endpoint) => heyClient.put(endpoint)),
+      tryEndpoints(
+        [`/entries/${id}/reply_later`, `/topics/${id}/reply_later`],
+        (endpoint) => heyClient.put(endpoint),
+      ),
     )
 
     return organiseResponseToResult(response, () =>
-      invalidateForAction("reply_later", entryId),
+      invalidateForAction("reply_later", id),
     )
   } catch (err) {
     return { success: false, error: toUserError(err) }
@@ -319,8 +342,11 @@ export async function trashEmail(topicId: string): Promise<OrganiseResult> {
   }
 
   try {
+    const formData = new URLSearchParams()
+    formData.append("_method", "put")
+
     const response = await withCsrfRetry(() =>
-      heyClient.post(`/topics/${topicId}/status/trashed`),
+      heyClient.post(`/topics/${topicId}/status/trashed`, formData),
     )
 
     return organiseResponseToResult(response, () =>
@@ -339,8 +365,11 @@ export async function restoreFromTrash(
   }
 
   try {
+    const formData = new URLSearchParams()
+    formData.append("_method", "put")
+
     const response = await withCsrfRetry(() =>
-      heyClient.post(`/topics/${topicId}/status/active`),
+      heyClient.post(`/topics/${topicId}/status/active`, formData),
     )
 
     return organiseResponseToResult(response, () =>
@@ -357,8 +386,11 @@ export async function markAsSpam(topicId: string): Promise<OrganiseResult> {
   }
 
   try {
+    const formData = new URLSearchParams()
+    formData.append("_method", "put")
+
     const response = await withCsrfRetry(() =>
-      heyClient.post(`/topics/${topicId}/status/spam`),
+      heyClient.post(`/topics/${topicId}/status/spam`, formData),
     )
 
     return organiseResponseToResult(response, () =>
@@ -375,8 +407,11 @@ export async function markAsNotSpam(topicId: string): Promise<OrganiseResult> {
   }
 
   try {
+    const formData = new URLSearchParams()
+    formData.append("_method", "put")
+
     const response = await withCsrfRetry(() =>
-      heyClient.post(`/topics/${topicId}/status/ham`),
+      heyClient.post(`/topics/${topicId}/status/ham`, formData),
     )
 
     return organiseResponseToResult(response, () =>
@@ -590,6 +625,31 @@ export async function screenInById(
   }
 }
 
+const boxIdCache: Record<string, string> = {}
+
+async function getBoxId(targetKey: string): Promise<string | null> {
+  if (boxIdCache[targetKey]) return boxIdCache[targetKey]
+
+  const html = await heyClient.fetchHtml("/imbox")
+  const { parse: parseHtml } = await import("node-html-parser")
+  const root = parseHtml(html)
+
+  const forms = root.querySelectorAll("form[action*='/postings/moves']")
+  for (const form of forms) {
+    const target = form.getAttribute("data-bulk-actions-target")
+    const action = form.getAttribute("action")
+    const match = action?.match(/box_id=(\d+)/)
+    if (target && match) {
+      if (target.includes("trailbox")) boxIdCache.trailbox = match[1]
+      if (target.includes("asidebox")) boxIdCache.asidebox = match[1]
+      if (target.includes("laterbox")) boxIdCache.laterbox = match[1]
+      if (target.includes("imbox")) boxIdCache.imbox = match[1]
+      if (target.includes("feedbox")) boxIdCache.feedbox = match[1]
+    }
+  }
+  return boxIdCache[targetKey] || null
+}
+
 export async function moveTopicToPaperTrail(
   topicId: string,
 ): Promise<OrganiseResult> {
@@ -598,8 +658,17 @@ export async function moveTopicToPaperTrail(
   }
 
   try {
+    const boxId = await getBoxId("trailbox")
+    if (!boxId) {
+      return {
+        success: false,
+        error:
+          "Could not determine box_id for Paper Trail. The page structure may have changed.",
+      }
+    }
+
     const response = await withCsrfRetry(() =>
-      heyClient.post(`/topics/${topicId}/status/paper_trail`),
+      heyClient.post(`/topics/${topicId}/moves?box_id=${boxId}`),
     )
 
     return organiseResponseToResult(response, () =>
@@ -686,6 +755,39 @@ export async function addLabel(
   }
 }
 
+async function findFilingId(
+  topicId: string,
+  labelId: string,
+): Promise<string | null> {
+  const { listLabels } = await import("./read")
+  const labels = await listLabels()
+  const label = labels.find((l) => l.id === labelId)
+  if (!label) return null
+
+  const html = await heyClient.fetchHtml(`/topics/${topicId}/filings`)
+  const { parse: parseHtml } = await import("node-html-parser")
+  const root = parseHtml(html)
+
+  const forms = root.querySelectorAll("form[action*='/filings/']")
+  for (const form of forms) {
+    const button = form.querySelector("button")
+    const ariaLabel = button?.getAttribute("aria-label") || ""
+    if (ariaLabel.includes(label.name)) {
+      const action = form.getAttribute("action")
+      const match = action?.match(/\/filings\/(\d+)/)
+      if (match) return match[1]
+    }
+  }
+
+  if (forms.length === 1) {
+    const action = forms[0].getAttribute("action")
+    const match = action?.match(/\/filings\/(\d+)/)
+    if (match) return match[1]
+  }
+
+  return null
+}
+
 export async function removeLabel(
   topicId: string,
   labelId: string,
@@ -698,6 +800,22 @@ export async function removeLabel(
   }
 
   try {
+    const filingId = await findFilingId(topicId, labelId)
+    if (filingId) {
+      const formData = new URLSearchParams()
+      formData.append("_method", "delete")
+
+      const response = await withCsrfRetry(() =>
+        heyClient.post(`/topics/${topicId}/filings/${filingId}`, formData),
+      )
+
+      if (response.ok || response.status === 302) {
+        return organiseResponseToResult(response, () =>
+          invalidateForAction("label", topicId),
+        )
+      }
+    }
+
     const response = await withCsrfRetry(() =>
       heyClient.delete(`/topics/${topicId}/filings?folder_id=${labelId}`),
     )

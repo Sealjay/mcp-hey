@@ -689,32 +689,33 @@ const tools: Tool[] = [
   {
     name: "hey_set_aside",
     description:
-      "Move an email to Set Aside for later. Reversible via hey_unset_aside (requires posting_id from hey_list_set_aside). Returns {success, error?}. Use for emails you plan to revisit but want out of the Imbox.",
+      "Move an email thread to Set Aside for later. Reversible via hey_unset_aside (requires postingId from hey_list_set_aside). Returns {success, error?}. Use for emails you plan to revisit but want out of the Imbox. Does not affect future emails from the sender.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        entry_id: {
+        id: {
           type: "string",
           description:
-            "The entry ID to set aside (use entryId from list operations)",
+            "The topic or entry ID to set aside (use topicId or entryId from list operations)",
         },
       },
-      required: ["entry_id"],
+      required: ["id"],
     },
   },
   {
     name: "hey_reply_later",
-    description: "Move an email to Reply Later",
+    description:
+      "Move an email thread to Reply Later. Reversible via hey_remove_reply_later (requires postingId from hey_list_reply_later). Returns {success, error?}. Use for emails you intend to respond to but not right now.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        entry_id: {
+        id: {
           type: "string",
           description:
-            "The entry ID to mark for reply later (use entryId from list operations)",
+            "The topic or entry ID to mark for reply later (use topicId or entryId from list operations)",
         },
       },
-      required: ["entry_id"],
+      required: ["id"],
     },
   },
   {
@@ -824,13 +825,14 @@ const tools: Tool[] = [
   {
     name: "hey_move_to_paper_trail",
     description:
-      "Move an email thread to Paper Trail (automated/receipts section). Use for mailing list or automated emails that have been fully processed.",
+      "Move an email thread to Paper Trail (automated/receipts section). Moves the thread and auto-routes future emails from the sender to Paper Trail. Returns {success, error?}. Use for mailing list or automated emails that have been fully processed. Not reversible via a single tool — use hey_list_paper_trail to find it, then move back manually.",
     inputSchema: {
       type: "object" as const,
       properties: {
         id: {
           type: "string",
-          description: "The topic/thread ID to move to Paper Trail",
+          description:
+            "The topic/thread ID to move to Paper Trail (use topicId from hey_list_imbox)",
         },
       },
       required: ["id"],
@@ -1485,35 +1487,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Organisation tools
       case "hey_set_aside": {
-        const entryId = validateId(args?.entry_id)
-        if (!entryId) {
+        const id = validateId(args?.id)
+        if (!id) {
           return {
             content: [
               {
                 type: "text",
-                text: "Error: entry_id is required and must be valid (use entryId from list operations)",
+                text: "Error: id is required and must be valid (use topicId from list operations)",
               },
             ],
             isError: true,
           }
         }
-        result = await setAside(entryId)
+        result = await setAside(id)
         break
       }
       case "hey_reply_later": {
-        const entryId = validateId(args?.entry_id)
-        if (!entryId) {
+        const id = validateId(args?.id)
+        if (!id) {
           return {
             content: [
               {
                 type: "text",
-                text: "Error: entry_id is required and must be valid (use entryId from list operations)",
+                text: "Error: id is required and must be valid (use topicId from list operations)",
               },
             ],
             isError: true,
           }
         }
-        result = await replyLater(entryId)
+        result = await replyLater(id)
         break
       }
       case "hey_unset_aside": {

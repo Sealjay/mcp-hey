@@ -6,6 +6,7 @@ import {
   getCookieHeader,
   loadSession,
   runAuthHelper,
+  validateAuthenticatedSession,
 } from "./session"
 
 const BASE_URL = "https://app.hey.com"
@@ -214,10 +215,27 @@ export class HeyClient {
   private session: Session | null = null
   private cachedCsrfToken: string | null = null
   private csrfTokenExpiry = 0
+  private refreshInFlight: Promise<void> | null = null
+
+  constructor(
+    private readonly sessionDeps: {
+      ensureValidSession: () => Promise<Session | null>
+      loadSession: () => Promise<Session | null>
+      runAuthHelper: () => Promise<boolean>
+      validateAuthenticatedSession: (
+        session: Session | null,
+      ) => Promise<Session | null>
+    } = {
+      ensureValidSession,
+      loadSession,
+      runAuthHelper,
+      validateAuthenticatedSession,
+    },
+  ) {}
 
   async ensureSession(): Promise<Session> {
     if (!this.session) {
-      this.session = await ensureValidSession()
+      this.session = await this.sessionDeps.ensureValidSession()
     }
     if (!this.session) {
       throw new Error("Failed to authenticate with Hey.com")
@@ -226,10 +244,25 @@ export class HeyClient {
   }
 
   async refreshSession(): Promise<void> {
-    const success = await runAuthHelper()
-    if (success) {
-      this.session = await loadSession()
+    if (this.refreshInFlight) {
+      return this.refreshInFlight
     }
+
+    this.refreshInFlight = (async () => {
+      const success = await this.sessionDeps.runAuthHelper()
+      this.invalidateCsrfToken()
+      if (!success) {
+        this.session = null
+        return
+      }
+      this.session = await this.sessionDeps.validateAuthenticatedSession(
+        await this.sessionDeps.loadSession(),
+      )
+    })().finally(() => {
+      this.refreshInFlight = null
+    })
+
+    return this.refreshInFlight
   }
 
   private async handleResponse(response: Response): Promise<Response> {
