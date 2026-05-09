@@ -892,13 +892,14 @@ const tools: Tool[] = [
   {
     name: "hey_bubble_up",
     description:
-      "Schedule an email to bubble up (reappear) at a specific time slot. Use 'custom' slot with a date for a specific date, or 'surprise_me' for a random time.",
+      "Schedule an email to bubble up (reappear) at a specific time. Returns {success, error?}. Reversible via hey_pop_bubble. The 'now' slot requires a topicId; other slots accept topicId or postingId.",
     inputSchema: {
       type: "object" as const,
       properties: {
         posting_id: {
           type: "string",
-          description: "The posting ID to schedule",
+          description:
+            "The topic or posting ID to schedule (use topicId for 'now' slot)",
         },
         slot: {
           type: "string",
@@ -926,13 +927,14 @@ const tools: Tool[] = [
   {
     name: "hey_bubble_up_if_no_reply",
     description:
-      "Schedule an email to bubble up ONLY if there's no reply by a specific date. This is a conditional bubble-up - the email will only reappear if the recipient hasn't replied by the deadline.",
+      "Schedule an email to bubble up ONLY if there's no reply by a deadline date. Returns {success, error?}. The email will only reappear if the recipient hasn't replied. Reversible via hey_pop_bubble.",
     inputSchema: {
       type: "object" as const,
       properties: {
         posting_id: {
           type: "string",
-          description: "The posting ID to schedule",
+          description:
+            "The topic or posting ID to schedule (use topicId preferred)",
         },
         date: {
           type: "string",
@@ -946,13 +948,14 @@ const tools: Tool[] = [
   {
     name: "hey_pop_bubble",
     description:
-      "Pop (dismiss) a bubbled-up email so it sinks back into the Imbox. The email is not deleted or archived — it just stops being pinned at the top.",
+      "Pop (dismiss) a bubbled-up email so it sinks back into the Imbox. The email is not deleted — it just stops being pinned at the top. Returns {success, error?}.",
     inputSchema: {
       type: "object" as const,
       properties: {
         posting_id: {
           type: "string",
-          description: "The posting ID to pop/unbubble",
+          description:
+            "The topic or posting ID to pop/unbubble (use topicId preferred)",
         },
       },
       required: ["posting_id"],

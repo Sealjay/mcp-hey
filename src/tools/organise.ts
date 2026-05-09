@@ -466,7 +466,7 @@ export async function bubbleUp(
   date?: string,
 ): Promise<OrganiseResult> {
   if (!postingId) {
-    return { success: false, error: "Posting ID is required" }
+    return { success: false, error: "ID is required" }
   }
   if (!slot) {
     return { success: false, error: "Slot is required" }
@@ -485,7 +485,21 @@ export async function bubbleUp(
   }
 
   try {
-    const endpoint = `/postings/bubble_up?posting_ids[]=${postingId}&slot=${slot}`
+    if (slot === "now") {
+      const response = await withCsrfRetry(() =>
+        heyClient.post(`/topics/${postingId}/bubble_up_now`),
+      )
+      if (response.ok || response.status === 302) {
+        return organiseResponseToResult(response, () =>
+          invalidateForAction("bubble_up", postingId),
+        )
+      }
+    }
+
+    const endpoint =
+      slot === "now"
+        ? `/postings/bubble_up?posting_ids[]=${postingId}&slot=${slot}`
+        : `/topics/${postingId}/bubble_up?slot=${slot}`
 
     let formData: URLSearchParams | undefined
     if (slot === "custom" && date) {
@@ -505,19 +519,30 @@ export async function bubbleUp(
   }
 }
 
-/**
- * Pop (dismiss) a bubbled-up email so it sinks back into the Imbox.
- */
 export async function popBubble(postingId: string): Promise<OrganiseResult> {
   if (!postingId) {
     return { success: false, error: "Posting ID is required" }
   }
 
   try {
-    const endpoint = `/postings/bubble_up?posting_ids[]=${postingId}`
-    const response = await withCsrfRetry(() => heyClient.delete(endpoint))
+    const formData = new URLSearchParams()
+    formData.append("_method", "delete")
 
-    return organiseResponseToResult(response, () =>
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/topics/${postingId}/bubble_up`, formData),
+    )
+    if (response.ok || response.status === 302) {
+      return organiseResponseToResult(response, () =>
+        invalidateForAction("bubble_up", postingId),
+      )
+    }
+
+    const fallbackEndpoint = `/postings/bubble_up?posting_ids[]=${postingId}`
+    const fallbackResponse = await withCsrfRetry(() =>
+      heyClient.delete(fallbackEndpoint),
+    )
+
+    return organiseResponseToResult(fallbackResponse, () =>
       invalidateForAction("bubble_up", postingId),
     )
   } catch (err) {
@@ -533,7 +558,7 @@ export async function bubbleUpIfNoReply(
   date: string,
 ): Promise<OrganiseResult> {
   if (!postingId) {
-    return { success: false, error: "Posting ID is required" }
+    return { success: false, error: "ID is required" }
   }
   if (!date) {
     return { success: false, error: "Date is required (YYYY-MM-DD format)" }
@@ -546,16 +571,29 @@ export async function bubbleUpIfNoReply(
   }
 
   try {
-    const endpoint = `/postings/bubble_up?posting_ids[]=${postingId}&slot=custom&waiting_on=true`
-
     const formData = new URLSearchParams()
     formData.append("date", date)
 
     const response = await withCsrfRetry(() =>
-      heyClient.post(endpoint, formData),
+      heyClient.post(
+        `/topics/${postingId}/bubble_up?slot=custom&waiting_on=true`,
+        formData,
+      ),
+    )
+    if (response.ok || response.status === 302) {
+      return organiseResponseToResult(response, () =>
+        invalidateForAction("bubble_up", postingId),
+      )
+    }
+
+    const fallbackResponse = await withCsrfRetry(() =>
+      heyClient.post(
+        `/postings/bubble_up?posting_ids[]=${postingId}&slot=custom&waiting_on=true`,
+        formData,
+      ),
     )
 
-    return organiseResponseToResult(response, () =>
+    return organiseResponseToResult(fallbackResponse, () =>
       invalidateForAction("bubble_up", postingId),
     )
   } catch (err) {
