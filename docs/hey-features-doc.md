@@ -60,7 +60,7 @@ Tool definitions and parameters live in [`TOOLS.md`](TOOLS.md). Endpoint details
 | Mark as Not Spam | (in Spam view) | `hey_not_spam` | Implemented |
 | Ignore Thread | More > Ignore this thread | `hey_ignore_thread` | Implemented |
 | Unignore Thread | More > Stop ignoring | `hey_unignore_thread` | Implemented |
-| Move to View | More > Move… | — | Not implemented |
+| Move to Imbox/Feed/Paper Trail | More > Move… | `hey_move_to` | Implemented |
 
 ## Bubble Up
 

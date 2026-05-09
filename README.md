@@ -206,14 +206,14 @@ mcp-hey/
 
 ## Available tools
 
-41 tools grouped by function. See [`docs/TOOLS.md`](docs/TOOLS.md) for parameters, return shapes, and error behaviour.
+44 tools grouped by function. See [`docs/TOOLS.md`](docs/TOOLS.md) for parameters, return shapes, and error behaviour.
 
 | Category | Tools |
 |----------|-------|
 | Read | `hey_list_imbox`, `hey_imbox_summary`, `hey_list_feed`, `hey_list_paper_trail`, `hey_list_set_aside`, `hey_list_reply_later`, `hey_list_screener`, `hey_list_trash`, `hey_list_spam`, `hey_list_drafts`, `hey_read_email` |
 | Labels & Collections | `hey_list_labels`, `hey_list_label_emails`, `hey_add_label`, `hey_remove_label`, `hey_list_collections`, `hey_list_collection_emails`, `hey_add_to_collection`, `hey_remove_from_collection` |
 | Send | `hey_send_email`, `hey_reply`, `hey_forward` |
-| Triage | `hey_set_aside`, `hey_unset_aside`, `hey_reply_later`, `hey_remove_reply_later`, `hey_mark_unseen`, `hey_trash`, `hey_restore`, `hey_spam`, `hey_not_spam`, `hey_ignore_thread`, `hey_unignore_thread` |
+| Triage | `hey_set_aside`, `hey_unset_aside`, `hey_reply_later`, `hey_remove_reply_later`, `hey_move_to`, `hey_mark_unseen`, `hey_trash`, `hey_restore`, `hey_spam`, `hey_not_spam`, `hey_ignore_thread`, `hey_unignore_thread` |
 | Bubble up | `hey_bubble_up`, `hey_bubble_up_if_no_reply`, `hey_pop_bubble` |
 | Screener | `hey_screen_in`, `hey_screen_in_by_id`, `hey_screen_out` |
 | Search | `hey_search` |

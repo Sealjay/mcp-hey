@@ -42,6 +42,8 @@ export interface Session {
   lastValidated: number
 }
 
+const REQUIRED_SESSION_COOKIE_NAMES = new Set(["session_token", "_hey_session"])
+
 async function ensureDataDir(): Promise<void> {
   if (!existsSync(DATA_DIR)) {
     await Bun.write(join(DATA_DIR, ".gitkeep"), "")
@@ -102,6 +104,40 @@ export async function validateSession(session: Session): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+export function hasAuthenticatedSessionCookie(session: Session): boolean {
+  return session.cookies.some(
+    (cookie) =>
+      REQUIRED_SESSION_COOKIE_NAMES.has(cookie.name) &&
+      cookie.value.trim().length > 0,
+  )
+}
+
+export async function validateAuthenticatedSession(
+  session: Session | null,
+  validate: (session: Session) => Promise<boolean> = validateSession,
+): Promise<Session | null> {
+  if (!session) {
+    return null
+  }
+
+  if (!hasAuthenticatedSessionCookie(session)) {
+    console.error(
+      "[mcp-hey] Auth helper returned cookies without a Hey session",
+    )
+    return null
+  }
+
+  const isValid = await validate(session)
+  if (!isValid) {
+    console.error("[mcp-hey] Auth helper returned an invalid Hey session")
+    return null
+  }
+
+  session.lastValidated = Date.now()
+  await saveSession(session)
+  return session
 }
 
 export async function runAuthHelper(): Promise<boolean> {
@@ -169,5 +205,5 @@ async function doEnsureValidSession(): Promise<Session | null> {
 
   // Load the new session
   session = await loadSession()
-  return session
+  return validateAuthenticatedSession(session)
 }

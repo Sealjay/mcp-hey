@@ -28,7 +28,7 @@ import {
   markAsNotSpam,
   markAsSpam,
   markAsUnseen,
-  moveTopicToPaperTrail,
+  moveTo,
   popBubble,
   removeFromCollection,
   removeFromReplyLater,
@@ -689,32 +689,33 @@ const tools: Tool[] = [
   {
     name: "hey_set_aside",
     description:
-      "Move an email to Set Aside for later. Reversible via hey_unset_aside (requires posting_id from hey_list_set_aside). Returns {success, error?}. Use for emails you plan to revisit but want out of the Imbox.",
+      "Move an email thread to Set Aside for later. Reversible via hey_unset_aside (requires postingId from hey_list_set_aside). Returns {success, error?}. Use for emails you plan to revisit but want out of the Imbox. Does not affect future emails from the sender.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        entry_id: {
+        id: {
           type: "string",
           description:
-            "The entry ID to set aside (use entryId from list operations)",
+            "The topic or entry ID to set aside (use topicId or entryId from list operations)",
         },
       },
-      required: ["entry_id"],
+      required: ["id"],
     },
   },
   {
     name: "hey_reply_later",
-    description: "Move an email to Reply Later",
+    description:
+      "Move an email thread to Reply Later. Reversible via hey_remove_reply_later (requires postingId from hey_list_reply_later). Returns {success, error?}. Use for emails you intend to respond to but not right now.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        entry_id: {
+        id: {
           type: "string",
           description:
-            "The entry ID to mark for reply later (use entryId from list operations)",
+            "The topic or entry ID to mark for reply later (use topicId or entryId from list operations)",
         },
       },
-      required: ["entry_id"],
+      required: ["id"],
     },
   },
   {
@@ -822,18 +823,25 @@ const tools: Tool[] = [
     },
   },
   {
-    name: "hey_move_to_paper_trail",
+    name: "hey_move_to",
     description:
-      "Move an email thread to Paper Trail (automated/receipts section). Use for mailing list or automated emails that have been fully processed.",
+      "Move an email thread between Hey.com views: imbox, feed, or paper_trail. Returns {success, error?}. Use paper_trail for receipts/automated mail, feed for newsletters, imbox to restore. Reversible by moving to a different destination. Does not affect trash, spam, or screener — use hey_trash, hey_spam, or hey_screen_out for those.",
     inputSchema: {
       type: "object" as const,
       properties: {
         id: {
           type: "string",
-          description: "The topic/thread ID to move to Paper Trail",
+          description:
+            "The topic/thread ID to move (use topicId from list operations)",
+        },
+        destination: {
+          type: "string",
+          enum: ["imbox", "feed", "paper_trail"],
+          description:
+            "Target view: imbox (important mail), feed (newsletters/updates), paper_trail (receipts/automated)",
         },
       },
-      required: ["id"],
+      required: ["id", "destination"],
     },
   },
   {
@@ -884,13 +892,14 @@ const tools: Tool[] = [
   {
     name: "hey_bubble_up",
     description:
-      "Schedule an email to bubble up (reappear) at a specific time slot. Use 'custom' slot with a date for a specific date, or 'surprise_me' for a random time.",
+      "Schedule an email to bubble up (reappear) at a specific time. Returns {success, error?}. Reversible via hey_pop_bubble. The 'now' slot requires a topicId; other slots accept topicId or postingId.",
     inputSchema: {
       type: "object" as const,
       properties: {
         posting_id: {
           type: "string",
-          description: "The posting ID to schedule",
+          description:
+            "The topic or posting ID to schedule (use topicId for 'now' slot)",
         },
         slot: {
           type: "string",
@@ -918,13 +927,14 @@ const tools: Tool[] = [
   {
     name: "hey_bubble_up_if_no_reply",
     description:
-      "Schedule an email to bubble up ONLY if there's no reply by a specific date. This is a conditional bubble-up - the email will only reappear if the recipient hasn't replied by the deadline.",
+      "Schedule an email to bubble up ONLY if there's no reply by a deadline date. Returns {success, error?}. The email will only reappear if the recipient hasn't replied. Reversible via hey_pop_bubble.",
     inputSchema: {
       type: "object" as const,
       properties: {
         posting_id: {
           type: "string",
-          description: "The posting ID to schedule",
+          description:
+            "The topic or posting ID to schedule (use topicId preferred)",
         },
         date: {
           type: "string",
@@ -938,13 +948,14 @@ const tools: Tool[] = [
   {
     name: "hey_pop_bubble",
     description:
-      "Pop (dismiss) a bubbled-up email so it sinks back into the Imbox. The email is not deleted or archived — it just stops being pinned at the top.",
+      "Pop (dismiss) a bubbled-up email so it sinks back into the Imbox. The email is not deleted — it just stops being pinned at the top. Returns {success, error?}.",
     inputSchema: {
       type: "object" as const,
       properties: {
         posting_id: {
           type: "string",
-          description: "The posting ID to pop/unbubble",
+          description:
+            "The topic or posting ID to pop/unbubble (use topicId preferred)",
         },
       },
       required: ["posting_id"],
@@ -1485,35 +1496,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Organisation tools
       case "hey_set_aside": {
-        const entryId = validateId(args?.entry_id)
-        if (!entryId) {
+        const id = validateId(args?.id)
+        if (!id) {
           return {
             content: [
               {
                 type: "text",
-                text: "Error: entry_id is required and must be valid (use entryId from list operations)",
+                text: "Error: id is required and must be valid (use topicId from list operations)",
               },
             ],
             isError: true,
           }
         }
-        result = await setAside(entryId)
+        result = await setAside(id)
         break
       }
       case "hey_reply_later": {
-        const entryId = validateId(args?.entry_id)
-        if (!entryId) {
+        const id = validateId(args?.id)
+        if (!id) {
           return {
             content: [
               {
                 type: "text",
-                text: "Error: entry_id is required and must be valid (use entryId from list operations)",
+                text: "Error: id is required and must be valid (use topicId from list operations)",
               },
             ],
             isError: true,
           }
         }
-        result = await replyLater(entryId)
+        result = await replyLater(id)
         break
       }
       case "hey_unset_aside": {
@@ -1622,7 +1633,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await restoreFromTrash(id)
         break
       }
-      case "hey_move_to_paper_trail": {
+      case "hey_move_to": {
         const id = validateId(args?.id)
         if (!id) {
           return {
@@ -1632,7 +1643,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
-        result = await moveTopicToPaperTrail(id)
+        const destination = args?.destination as
+          | "imbox"
+          | "feed"
+          | "paper_trail"
+        if (
+          !destination ||
+          !["imbox", "feed", "paper_trail"].includes(destination)
+        ) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: destination is required (imbox, feed, or paper_trail)",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await moveTo(id, destination)
         break
       }
       case "hey_spam": {

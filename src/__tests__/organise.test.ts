@@ -2,23 +2,22 @@ import { describe, expect, test } from "bun:test"
 
 describe("Organise Tools", () => {
   describe("Input Validation", () => {
-    test("setAside should require entry ID", async () => {
-      // We can't easily mock the HTTP client, so test the validation logic
+    test("setAside should require ID", async () => {
       const { setAside } = await import("../tools/organise")
 
       const result = await setAside("")
 
       expect(result.success).toBe(false)
-      expect(result.error).toBe("Entry ID is required")
+      expect(result.error).toBe("ID is required")
     })
 
-    test("replyLater should require entry ID", async () => {
+    test("replyLater should require ID", async () => {
       const { replyLater } = await import("../tools/organise")
 
       const result = await replyLater("")
 
       expect(result.success).toBe(false)
-      expect(result.error).toBe("Entry ID is required")
+      expect(result.error).toBe("ID is required")
     })
 
     test("screenIn should require sender email", async () => {
@@ -55,6 +54,25 @@ describe("Organise Tools", () => {
 
       expect(result.success).toBe(false)
       expect(result.error).toBe("Posting ID is required")
+    })
+
+    test("moveTo should require topic ID", async () => {
+      const { moveTo } = await import("../tools/organise")
+
+      const result = await moveTo("", "paper_trail")
+
+      expect(result.success).toBe(false)
+      expect(result.error).toBe("Topic ID is required")
+    })
+
+    test("moveTo should reject invalid destination", async () => {
+      const { moveTo } = await import("../tools/organise")
+
+      // @ts-expect-error testing invalid destination
+      const result = await moveTo("123", "invalid")
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain("Invalid destination")
     })
 
     test("markAsRead should require email ID", async () => {

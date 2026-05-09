@@ -48,3 +48,6 @@ venv/
 
 # Bun
 bun.lockb
+
+# Live integration tests (contain account-specific data)
+src/__tests__/live-*.ts

@@ -572,6 +572,44 @@ Screen in (approve) or screen out (reject) a sender.
 
 ---
 
+#### POST /postings/moves
+
+Move emails between Hey.com boxes (Imbox, Feed, Paper Trail, Set Aside, Reply Later). This is the general-purpose box move endpoint used by Hey's web UI for all inter-box moves.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `box_id` | string | query | Target box ID (account-specific, extracted from page HTML) |
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `posting_ids` | string | Yes | Posting ID(s) to move (comma-separated for multiple) |
+
+**Box targets** (identified by `data-bulk-actions-target` attribute on the form element):
+
+| Target | Attribute | Description |
+|--------|-----------|-------------|
+| Imbox / Done | `doneButton` or `imboxButton` | Move to Imbox |
+| Feed | `feedboxButton` | Move to The Feed |
+| Set Aside | `asideboxButton` | Move to Set Aside |
+| Reply Later | `laterboxButton` | Move to Reply Later |
+| Paper Trail | `trailboxButton` | Move to Paper Trail |
+
+> **Note**: The `box_id` is account-specific and cannot be hardcoded. Extract it from page HTML by finding forms with `action` containing `/postings/moves` and matching the `data-bulk-actions-target` attribute.
+
+**Example** (move to Paper Trail):
+```
+POST /postings/moves?box_id=2145537
+Content-Type: application/x-www-form-urlencoded
+
+posting_ids=1180230233
+```
+
+**Response:** 200 OK or redirect
+
+---
+
 #### POST /postings/bubble_up
 
 Schedule emails to bubble back up to Imbox.
@@ -952,3 +990,9 @@ When a session expires, requests return a 302 redirect to `/sign_in`. The mcp-he
 | 2026-03 | Reply draft does not pre-populate recipients or subject -- both must be included in Step 2 PATCH |
 | 2026-03 | Draft send form discovered at `/topics/{threadId}/toolbar?expanded_draft={draftId}` (lazy-loaded Turbo Frame), not on main topic page |
 | 2026-04 | Documented that `GET /messages/{id}.text` returns multipart MIME including base64 attachments and `text/calendar` parts; surfaced via new `hey_download_attachment` and `hey_get_calendar_invite` tools |
+| 2026-05 | **BREAKING**: Move to Paper Trail uses `POST /topics/{id}/moves?box_id={ptBoxId}` (thread view) or `POST /postings/moves?box_id={ptBoxId}` with `posting_ids` (list view), NOT `POST /topics/{id}/status/paper_trail` (which never existed). `box_id` is account-specific |
+| 2026-05 | Documented `POST /postings/moves` and `POST /topics/{id}/moves` as the box-move endpoints for inter-box moves (Imbox, Feed, Paper Trail, Set Aside, Reply Later) |
+| 2026-05 | **BREAKING**: Status endpoints (`/topics/{id}/status/trashed`, `active`, `spam`, `ham`) now require `_method=put` form field (Rails PUT override). Bare POST returns 404 |
+| 2026-05 | **BREAKING**: Set Aside and Reply Later now use `POST /topics/{id}/moves?box_id={boxId}` instead of `PUT /entries/{id}/set_aside` and `PUT /entries/{id}/reply_later` |
+| 2026-05 | **BREAKING**: Label removal uses `POST /topics/{id}/filings/{filingId}` with `_method=delete`. Filing ID obtained from `/topics/{id}/filings` (Turbo Frame). Old `DELETE /topics/{id}/filings?folder_id={labelId}` returns 404 |
+| 2026-05 | Documented Hey.com entity model: Posting (list item), Topic (thread), Entry (single message) use different endpoint patterns |
