@@ -1,7 +1,13 @@
 {
   "name": "mcp-hey",
-  "version": "0.2.0",
-  "private": true,
+  "version": "0.3.0",
+  "private": false,
+  "license": "MIT",
+  "author": {
+    "name": "Chris Lloyd-Jones",
+    "url": "https://sealjay.com"
+  },
+  "description": "A local MCP server providing Claude with read/write access to Hey.com email accounts via reverse-engineered web APIs.",
   "type": "module",
   "scripts": {
     "dev": "bun run src/index.ts",
