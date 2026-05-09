@@ -745,14 +745,22 @@ Restore an email thread from Trash.
 
 ---
 
-### hey_move_to_paper_trail
+### hey_move_to
 
-Move an email to Paper Trail (automated/receipts section). Use for mailing list or automated emails that have been fully processed.
+Move an email thread between Hey.com views: Imbox, Feed, or Paper Trail. Reversible by moving to a different destination.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| id | string | **Yes** | - | The topic/thread ID to move to Paper Trail (use `topicId` from list operations) |
+| id | string | **Yes** | - | The topic/thread ID to move (use `topicId` from list operations) |
+| destination | string | **Yes** | - | Target view: `imbox`, `feed`, or `paper_trail` |
+
+**Destination values:**
+| Value | Description |
+|-------|-------------|
+| `imbox` | Important emails that need attention |
+| `feed` | Newsletters, notifications, updates |
+| `paper_trail` | Receipts, confirmations, automated/transactional emails |
 
 **Returns:**
 ```json
@@ -761,7 +769,7 @@ Move an email to Paper Trail (automated/receipts section). Use for mailing list 
 }
 ```
 
-> **Implementation**: Uses `POST /postings/moves?box_id={paperTrailBoxId}` with `posting_ids` form field. The `box_id` is account-specific and extracted dynamically from the Imbox page HTML.
+> **Note**: This tool does not cover trash, spam, or screener — use `hey_trash`, `hey_spam`, or `hey_screen_out` for those. Set Aside and Reply Later have their own dedicated tools (`hey_set_aside`, `hey_reply_later`) because they are temporary triage actions with different reversal semantics.
 
 ---
 
@@ -1038,7 +1046,7 @@ Hey.com uses different ID types for different operations. Always use the correct
 | ID Type | Field Name | Used By |
 |---------|------------|---------|
 | **Posting ID** | `postingId` | `hey_bubble_up`, `hey_bubble_up_if_no_reply`, `hey_pop_bubble`, `hey_ignore_thread`, `hey_unignore_thread`, `hey_unset_aside`, `hey_remove_reply_later`, `hey_read_email` (Paper Trail bundles) |
-| **Topic ID** | `topicId` | `hey_reply`, `hey_trash`, `hey_restore`, `hey_spam`, `hey_not_spam`, `hey_add_label`, `hey_remove_label`, `hey_add_to_collection`, `hey_remove_from_collection`, `hey_mark_unseen`, `hey_move_to_paper_trail`, `hey_read_email` (threads) |
+| **Topic ID** | `topicId` | `hey_reply`, `hey_trash`, `hey_restore`, `hey_spam`, `hey_not_spam`, `hey_add_label`, `hey_remove_label`, `hey_add_to_collection`, `hey_remove_from_collection`, `hey_mark_unseen`, `hey_move_to`, `hey_read_email` (threads) |
 | **Topic or Entry ID** | `topicId` or `entryId` | `hey_set_aside`, `hey_reply_later` (accepts either, tries topic-based move first then entry-based fallback) |
 | **Entry ID** | `entryId` | `hey_forward` |
 | **Clearance ID** | `clearanceId` | `hey_screen_in_by_id` |

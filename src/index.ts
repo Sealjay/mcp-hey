@@ -28,7 +28,7 @@ import {
   markAsNotSpam,
   markAsSpam,
   markAsUnseen,
-  moveTopicToPaperTrail,
+  moveTo,
   popBubble,
   removeFromCollection,
   removeFromReplyLater,
@@ -823,19 +823,25 @@ const tools: Tool[] = [
     },
   },
   {
-    name: "hey_move_to_paper_trail",
+    name: "hey_move_to",
     description:
-      "Move an email thread to Paper Trail (automated/receipts section). Moves the thread and auto-routes future emails from the sender to Paper Trail. Returns {success, error?}. Use for mailing list or automated emails that have been fully processed. Not reversible via a single tool — use hey_list_paper_trail to find it, then move back manually.",
+      "Move an email thread between Hey.com views: imbox, feed, or paper_trail. Returns {success, error?}. Use paper_trail for receipts/automated mail, feed for newsletters, imbox to restore. Reversible by moving to a different destination. Does not affect trash, spam, or screener — use hey_trash, hey_spam, or hey_screen_out for those.",
     inputSchema: {
       type: "object" as const,
       properties: {
         id: {
           type: "string",
           description:
-            "The topic/thread ID to move to Paper Trail (use topicId from hey_list_imbox)",
+            "The topic/thread ID to move (use topicId from list operations)",
+        },
+        destination: {
+          type: "string",
+          enum: ["imbox", "feed", "paper_trail"],
+          description:
+            "Target view: imbox (important mail), feed (newsletters/updates), paper_trail (receipts/automated)",
         },
       },
-      required: ["id"],
+      required: ["id", "destination"],
     },
   },
   {
@@ -1624,7 +1630,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await restoreFromTrash(id)
         break
       }
-      case "hey_move_to_paper_trail": {
+      case "hey_move_to": {
         const id = validateId(args?.id)
         if (!id) {
           return {
@@ -1634,7 +1640,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
-        result = await moveTopicToPaperTrail(id)
+        const destination = args?.destination as
+          | "imbox"
+          | "feed"
+          | "paper_trail"
+        if (
+          !destination ||
+          !["imbox", "feed", "paper_trail"].includes(destination)
+        ) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: destination is required (imbox, feed, or paper_trail)",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = await moveTo(id, destination)
         break
       }
       case "hey_spam": {

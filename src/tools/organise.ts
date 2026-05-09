@@ -650,20 +650,42 @@ async function getBoxId(targetKey: string): Promise<string | null> {
   return boxIdCache[targetKey] || null
 }
 
-export async function moveTopicToPaperTrail(
+export type MoveDestination = "imbox" | "feed" | "paper_trail"
+
+const destinationBoxKey: Record<MoveDestination, string> = {
+  imbox: "imbox",
+  feed: "feedbox",
+  paper_trail: "trailbox",
+}
+
+const destinationCacheAction: Record<MoveDestination, string> = {
+  imbox: "restore",
+  feed: "feed",
+  paper_trail: "paper_trail",
+}
+
+export async function moveTo(
   topicId: string,
+  destination: MoveDestination,
 ): Promise<OrganiseResult> {
   if (!topicId) {
     return { success: false, error: "Topic ID is required" }
   }
 
+  const boxKey = destinationBoxKey[destination]
+  if (!boxKey) {
+    return {
+      success: false,
+      error: `Invalid destination: ${destination}. Must be imbox, feed, or paper_trail.`,
+    }
+  }
+
   try {
-    const boxId = await getBoxId("trailbox")
+    const boxId = await getBoxId(boxKey)
     if (!boxId) {
       return {
         success: false,
-        error:
-          "Could not determine box_id for Paper Trail. The page structure may have changed.",
+        error: `Could not determine box_id for ${destination}. The page structure may have changed.`,
       }
     }
 
@@ -672,7 +694,7 @@ export async function moveTopicToPaperTrail(
     )
 
     return organiseResponseToResult(response, () =>
-      invalidateForAction("paper_trail", topicId),
+      invalidateForAction(destinationCacheAction[destination], topicId),
     )
   } catch (err) {
     return { success: false, error: toUserError(err) }

@@ -526,9 +526,17 @@ export function invalidateForAction(
       if (messageId) {
         execute("UPDATE messages SET cached_at = 0 WHERE id = ?", [messageId])
       }
-      // Invalidate imbox (source) and paper_trail (destination)
       execute(
         "UPDATE sync_state SET requires_full_sync = 1 WHERE folder IN ('imbox', 'paper_trail')",
+      )
+      break
+
+    case "feed":
+      if (messageId) {
+        execute("UPDATE messages SET cached_at = 0 WHERE id = ?", [messageId])
+      }
+      execute(
+        "UPDATE sync_state SET requires_full_sync = 1 WHERE folder IN ('imbox', 'feed')",
       )
       break
   }

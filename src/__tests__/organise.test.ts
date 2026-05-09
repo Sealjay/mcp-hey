@@ -56,13 +56,23 @@ describe("Organise Tools", () => {
       expect(result.error).toBe("Posting ID is required")
     })
 
-    test("moveTopicToPaperTrail should require topic ID", async () => {
-      const { moveTopicToPaperTrail } = await import("../tools/organise")
+    test("moveTo should require topic ID", async () => {
+      const { moveTo } = await import("../tools/organise")
 
-      const result = await moveTopicToPaperTrail("")
+      const result = await moveTo("", "paper_trail")
 
       expect(result.success).toBe(false)
       expect(result.error).toBe("Topic ID is required")
+    })
+
+    test("moveTo should reject invalid destination", async () => {
+      const { moveTo } = await import("../tools/organise")
+
+      // @ts-expect-error testing invalid destination
+      const result = await moveTo("123", "invalid")
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain("Invalid destination")
     })
 
     test("markAsRead should require email ID", async () => {
