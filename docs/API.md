@@ -996,3 +996,4 @@ When a session expires, requests return a 302 redirect to `/sign_in`. The mcp-he
 | 2026-05 | **BREAKING**: Set Aside and Reply Later now use `POST /topics/{id}/moves?box_id={boxId}` instead of `PUT /entries/{id}/set_aside` and `PUT /entries/{id}/reply_later` |
 | 2026-05 | **BREAKING**: Label removal uses `POST /topics/{id}/filings/{filingId}` with `_method=delete`. Filing ID obtained from `/topics/{id}/filings` (Turbo Frame). Old `DELETE /topics/{id}/filings?folder_id={labelId}` returns 404 |
 | 2026-05 | Documented Hey.com entity model: Posting (list item), Topic (thread), Entry (single message) use different endpoint patterns |
+| 2026-05 | `/messages/{id}.text` requires entry/message ID, not topic ID. Added `resolveMessageId` to resolve topic IDs to message IDs via the topic page HTML |

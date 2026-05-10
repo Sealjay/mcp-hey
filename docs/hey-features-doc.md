@@ -8,16 +8,16 @@ Tool definitions and parameters live in [`TOOLS.md`](TOOLS.md). Endpoint details
 
 | Feature | UI Location | MCP Tool | Status |
 |---------|-------------|----------|--------|
-| List Imbox | Imbox | `hey_list_imbox` | Implemented |
+| List Imbox | Imbox | `hey_list_emails` (folder=imbox) | Implemented |
 | Imbox Summary | (derived) | `hey_imbox_summary` | Implemented |
-| List Feed | The Feed | `hey_list_feed` | Implemented |
-| List Paper Trail | Paper Trail | `hey_list_paper_trail` | Implemented |
+| List Feed | The Feed | `hey_list_emails` (folder=feed) | Implemented |
+| List Paper Trail | Paper Trail | `hey_list_emails` (folder=paper_trail) | Implemented |
 | List Set Aside | Set Aside | `hey_list_set_aside` | Implemented |
 | List Reply Later | Reply Later | `hey_list_reply_later` | Implemented |
 | List Screener | Screener | `hey_list_screener` | Implemented |
-| List Trash | Trash | `hey_list_trash` | Implemented |
-| List Spam | Spam | `hey_list_spam` | Implemented |
-| List Drafts | Drafts | `hey_list_drafts` | Implemented |
+| List Trash | Trash | `hey_list_emails` (folder=trash) | Implemented |
+| List Spam | Spam | `hey_list_emails` (folder=spam) | Implemented |
+| List Drafts | Drafts | `hey_list_emails` (folder=drafts) | Implemented |
 | List Sent | Sent | — | Not implemented |
 | List Previously Seen | Previously Seen | — | Not implemented |
 | List Screened Out | Screened Out | — | Not implemented |
@@ -54,12 +54,14 @@ Tool definitions and parameters live in [`TOOLS.md`](TOOLS.md). Endpoint details
 | Reply Later | Action bar | `hey_reply_later` | Implemented |
 | Remove from Reply Later ("Done") | Action bar | `hey_remove_reply_later` | Implemented |
 | Mark as Unseen | More > Mark Unseen | `hey_mark_unseen` | Implemented |
-| Trash | More > Trash | `hey_trash` | Implemented |
-| Restore from Trash | (in Trash view) | `hey_restore` | Implemented |
-| Mark as Spam | Message menu > Report spam | `hey_spam` | Implemented |
-| Mark as Not Spam | (in Spam view) | `hey_not_spam` | Implemented |
-| Ignore Thread | More > Ignore this thread | `hey_ignore_thread` | Implemented |
-| Unignore Thread | More > Stop ignoring | `hey_unignore_thread` | Implemented |
+| Mark Read | (automatic / click) | `hey_read_status` (status=read) | Implemented |
+| Mark Unread | More > Mark Unread | `hey_read_status` (status=unread) | Implemented |
+| Trash | More > Trash | `hey_set_status` (action=trash) | Implemented |
+| Restore from Trash | (in Trash view) | `hey_set_status` (action=restore) | Implemented |
+| Mark as Spam | Message menu > Report spam | `hey_set_status` (action=spam) | Implemented |
+| Mark as Not Spam | (in Spam view) | `hey_set_status` (action=unspam) | Implemented |
+| Ignore Thread | More > Ignore this thread | `hey_thread_mute` (action=mute) | Implemented |
+| Unignore Thread | More > Stop ignoring | `hey_thread_mute` (action=unmute) | Implemented |
 | Move to Imbox/Feed/Paper Trail | More > Move… | `hey_move_to` | Implemented |
 
 ## Bubble Up
@@ -74,9 +76,10 @@ Tool definitions and parameters live in [`TOOLS.md`](TOOLS.md). Endpoint details
 
 | Feature | UI Location | MCP Tool | Status |
 |---------|-------------|----------|--------|
-| Screen In (by email) | Screener | `hey_screen_in` | Implemented |
-| Screen In (by clearance ID) | Screener | `hey_screen_in_by_id` | Implemented |
-| Screen Out | Screener | `hey_screen_out` | Implemented |
+| Screen In (by email) | Screener | `hey_screen` (action=approve) | Implemented |
+| Screen In (by clearance ID) | Screener | `hey_screen_by_id` (action=approve) | Implemented |
+| Screen Out (by email) | Screener | `hey_screen` (action=reject) | Implemented |
+| Screen Out (by clearance ID) | Screener | `hey_screen_by_id` (action=reject) | Implemented |
 | Clear All Screener | Clear all… | — | Not implemented |
 
 ## Labels & Collections
@@ -85,13 +88,13 @@ Tool definitions and parameters live in [`TOOLS.md`](TOOLS.md). Endpoint details
 |---------|-------------|----------|--------|
 | List Labels | Labels | `hey_list_labels` | Implemented |
 | View Label Emails | Click label | `hey_list_label_emails` | Implemented |
-| Add Label to Thread | More > Label… | `hey_add_label` | Implemented |
-| Remove Label from Thread | (in label view) | `hey_remove_label` | Implemented |
+| Add Label to Thread | More > Label… | `hey_label` (action=add) | Implemented |
+| Remove Label from Thread | (in label view) | `hey_label` (action=remove) | Implemented |
 | Create / Delete Label | Labels page | — | Not implemented |
 | List Collections | Collections | `hey_list_collections` | Implemented |
 | View Collection Emails | Click collection | `hey_list_collection_emails` | Implemented |
-| Add to Collection | More > Add thread to Collection | `hey_add_to_collection` | Implemented |
-| Remove from Collection | (in collection view) | `hey_remove_from_collection` | Implemented |
+| Add to Collection | More > Add thread to Collection | `hey_collection` (action=add) | Implemented |
+| Remove from Collection | (in collection view) | `hey_collection` (action=remove) | Implemented |
 | Create / Delete Collection | Collections page | — | Not implemented |
 
 ## Search

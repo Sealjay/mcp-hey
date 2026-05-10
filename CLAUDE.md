@@ -58,11 +58,16 @@ A local MCP server providing Claude with read/write access to Hey.com email acco
 
 **Always use `bun`, not `npm`.**
 
+### TypeScript LSP
+
+The project has full TypeScript LSP support via `tsconfig.json` (strict mode, Bun types). Use the LSP for type checking before committing — run `bunx tsc --noEmit` to verify. The LSP provides autocompletion, go-to-definition, and inline type errors in supported editors.
+
 ### TypeScript (Biome)
 
 ```sh
 bun run lint             # Check for issues
 bun run format           # Fix issues (lint + format)
+bunx tsc --noEmit        # Type check (no output)
 ```
 
 ### Python (UV + Ruff)

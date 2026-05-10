@@ -18,6 +18,7 @@ import {
   type AttachmentMeta,
   type CalendarInviteMeta,
   listAttachmentsForEmail,
+  probeAttachmentsFromRaw,
 } from "./attachments"
 
 export interface Email {
@@ -51,6 +52,19 @@ export interface ImboxSummary {
   bubbledUpEmails: Email[]
 }
 
+export interface ThreadEntry {
+  entryId: string
+  from: string
+  fromEmail?: string
+  to?: string[]
+  cc?: string[]
+  subject?: string
+  date?: string
+  body: string
+  attachments?: AttachmentMeta[]
+  calendar_invites?: CalendarInviteMeta[]
+}
+
 export interface EmailDetail {
   id: string
   from: string
@@ -61,10 +75,10 @@ export interface EmailDetail {
   body: string
   date?: string
   threadId?: string
-  /** Attachment metadata only - no inline base64. Empty array when none. */
+  entries?: ThreadEntry[]
   attachments?: AttachmentMeta[]
-  /** Calendar invites parsed from .ics attachments. */
   calendar_invites?: CalendarInviteMeta[]
+  muted?: boolean
 }
 
 export interface ListOptions {
@@ -136,9 +150,10 @@ function extractAttachmentCount(entry: HTMLElement): number | undefined {
   return 1
 }
 
-function extractEmailsFromHtml(html: string): Email[] {
+function extractEmailsFromHtml(htmlOrRoot: string | HTMLElement): Email[] {
   try {
-    const root = parseHtml(html)
+    const root =
+      typeof htmlOrRoot === "string" ? parseHtml(htmlOrRoot) : htmlOrRoot
     const emails: Email[] = []
 
     // Hey.com email entries can be:
@@ -340,7 +355,7 @@ function extractEmailsFromHtml(html: string): Email[] {
 
 function extractImboxSummary(html: string): ImboxSummary {
   const root = parseHtml(html)
-  const emails = extractEmailsFromHtml(html)
+  const emails = extractEmailsFromHtml(root)
 
   // Extract screener count from button text like "Screen 1 first-time sender"
   let screenerCount = 0
@@ -378,9 +393,94 @@ function extractImboxSummary(html: string): ImboxSummary {
   }
 }
 
+function decodeQuotedPrintable(text: string): string {
+  return text
+    .replace(/=\r?\n/g, "")
+    .replace(/=([0-9A-Fa-f]{2})/g, (_, hex) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    )
+}
+
+function decodeBase64(text: string): string {
+  const cleaned = text.replace(/\r?\n/g, "")
+  try {
+    return Buffer.from(cleaned, "base64").toString("utf-8")
+  } catch {
+    return text
+  }
+}
+
+function decodeTransferEncoding(body: string, encoding: string): string {
+  const enc = encoding.toLowerCase().trim()
+  if (enc === "quoted-printable") return decodeQuotedPrintable(body)
+  if (enc === "base64") return decodeBase64(body)
+  return body
+}
+
+function parseMimeHeaders(block: string): {
+  headers: Record<string, string>
+  bodyStart: number
+} {
+  const lines = block.split("\n")
+  const headers: Record<string, string> = {}
+  let bodyStart = 0
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.trim() === "") {
+      bodyStart = i + 1
+      break
+    }
+    if (line.startsWith(" ") || line.startsWith("\t")) {
+      const lastKey = Object.keys(headers).pop()
+      if (lastKey) headers[lastKey] += ` ${line.trim()}`
+    } else {
+      const colonIdx = line.indexOf(":")
+      if (colonIdx > 0) {
+        const key = line.slice(0, colonIdx).toLowerCase()
+        headers[key] = line.slice(colonIdx + 1).trim()
+      }
+    }
+  }
+
+  return { headers, bodyStart }
+}
+
+function extractTextFromMimeRecursive(content: string): string {
+  const { headers, bodyStart } = parseMimeHeaders(content)
+  const ct = (headers["content-type"] || "").toLowerCase()
+  const encoding = headers["content-transfer-encoding"] || "7bit"
+  const body = content.split("\n").slice(bodyStart).join("\n")
+
+  if (ct.includes("image/") || ct.includes("application/octet-stream")) {
+    return ""
+  }
+
+  const boundaryMatch = ct.match(/boundary="?([^";\s]+)"?/)
+  if (boundaryMatch) {
+    const parts = body.split(`--${boundaryMatch[1]}`)
+    for (const part of parts) {
+      const trimmed = part.trim()
+      if (!trimmed || trimmed === "--") continue
+      const result = extractTextFromMimeRecursive(trimmed)
+      if (result) return result
+    }
+    return ""
+  }
+
+  if (ct.includes("text/plain") || (!ct && !headers["content-type"])) {
+    let textBody = body.trim()
+    const bIdx = textBody.indexOf("\n--")
+    if (bIdx > 0) textBody = textBody.slice(0, bIdx).trim()
+    return decodeTransferEncoding(textBody, encoding)
+  }
+
+  return ""
+}
+
 /**
  * Parse raw email text format (MIME) to extract body and headers.
- * This handles the /messages/{id}.text endpoint response.
+ * Handles quoted-printable, base64, and multipart MIME messages.
  */
 function parseRawEmailText(rawText: string): {
   from: string
@@ -390,97 +490,24 @@ function parseRawEmailText(rawText: string): {
   date?: string
   to?: string[]
 } {
+  const { headers, bodyStart } = parseMimeHeaders(rawText)
   const lines = rawText.split("\n")
-  const headers: Record<string, string> = {}
-  let headerEnd = 0
 
-  // Parse headers until empty line
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    if (line.trim() === "") {
-      headerEnd = i
-      break
-    }
-    // Handle header continuation (lines starting with whitespace)
-    if (line.startsWith(" ") || line.startsWith("\t")) {
-      const lastKey = Object.keys(headers).pop()
-      if (lastKey) {
-        headers[lastKey] += ` ${line.trim()}`
-      }
-    } else {
-      const colonIdx = line.indexOf(":")
-      if (colonIdx > 0) {
-        const key = line.slice(0, colonIdx).toLowerCase()
-        const value = line.slice(colonIdx + 1).trim()
-        headers[key] = value
-      }
-    }
-  }
-
-  // Extract from header
   const fromHeader = headers.from || ""
   const fromMatch = fromHeader.match(/^([^<]+)?<?([^>]+@[^>]+)?>?$/)
   const from = fromMatch?.[1]?.trim()?.replace(/^"|"$/g, "") || "Unknown"
   const fromEmail = fromMatch?.[2]
 
-  // Extract subject
   const subject = headers.subject || "(No subject)"
-
-  // Extract date
   const date = headers.date
 
-  // Extract to
   const toHeader = headers.to || ""
   const to = toHeader
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean)
 
-  // Extract body - find plain text part in MIME message
-  let body = ""
-  const bodyContent = lines.slice(headerEnd + 1).join("\n")
-
-  // Check for MIME boundary
-  const boundaryMatch = headers["content-type"]?.match(
-    /boundary="?([^";\s]+)"?/,
-  )
-  if (boundaryMatch) {
-    const boundary = boundaryMatch[1]
-    const parts = bodyContent.split(`--${boundary}`)
-
-    // Find plain text part
-    for (const part of parts) {
-      if (
-        part.includes("Content-Type: text/plain") ||
-        part.includes("content-type: text/plain")
-      ) {
-        // Skip headers of this part
-        const partLines = part.split("\n")
-        let partHeaderEnd = 0
-        for (let i = 0; i < partLines.length; i++) {
-          if (partLines[i].trim() === "") {
-            partHeaderEnd = i
-            break
-          }
-        }
-        body = partLines
-          .slice(partHeaderEnd + 1)
-          .join("\n")
-          .trim()
-        // Stop at next boundary marker
-        const boundaryIdx = body.indexOf(`--${boundary}`)
-        if (boundaryIdx > 0) {
-          body = body.slice(0, boundaryIdx).trim()
-        }
-        break
-      }
-    }
-  }
-
-  // If no MIME parts, use raw body
-  if (!body) {
-    body = bodyContent.trim()
-  }
+  const body = extractTextFromMimeRecursive(rawText)
 
   return {
     from,
@@ -524,63 +551,88 @@ function extractEmailDetail(
   )
   const subject = subjectEl?.text?.trim() || "(No subject)"
 
-  // Extract sender from entry header - look for link with sender name
-  // The avatar alt attribute contains "Name <email>" format
-  const avatarEl = root.querySelector(".entry__avatar .avatar, .avatar")
-  const avatarAlt = avatarEl?.getAttribute("alt") || ""
+  // Parse all entries in the thread
+  const entryEls = root.querySelectorAll(".entry.entry--sheet")
+  const entries: ThreadEntry[] = []
 
-  // Parse "Name <email>" format from avatar alt
-  const emailMatch = avatarAlt.match(/<([^>]+)>/)
-  const fromEmail = emailMatch?.[1]
-  const from = avatarAlt.split("<")[0]?.trim() || "Unknown"
+  for (const entryEl of entryEls) {
+    const entryId = entryEl.getAttribute("id")?.replace("entry_", "") || ""
+    const avatar = entryEl.querySelector(".avatar")
+    const avatarAlt = avatar?.getAttribute("alt") || ""
+    const entryEmailMatch = avatarAlt.match(/<([^>]+)>/)
+    const entryFrom = avatarAlt.split("<")[0]?.trim() || "Unknown"
+    const entryFromEmail = entryEmailMatch?.[1]
+    const timeEl = entryEl.querySelector("time[datetime]")
+    const entryDate = timeEl?.getAttribute("datetime") || timeEl?.text?.trim()
 
-  // Extract body content
-  // Hey uses <message-content> with shadow DOM, but the template/turbo-frame
-  // contains the actual HTML content when fetched server-side
-  let body = ""
+    const entryToEls = entryEl.querySelectorAll(
+      ".entry__recipients a, [class*='recipient'] a",
+    )
+    const entryTo = entryToEls
+      .map((el: HTMLElement) => el.text.trim())
+      .filter(Boolean)
+    const entryCcEls = entryEl.querySelectorAll("[class*='cc'] a")
+    const entryCc = entryCcEls
+      .map((el: HTMLElement) => el.text.trim())
+      .filter(Boolean)
 
-  // Try multiple selectors for body content
-  const bodySelectors = [
-    "message-content template",
-    "message-content",
-    ".entry__body .entry__content",
-    ".entry__content",
-    ".trix-content",
-    ".message-body",
-  ]
-
-  for (const selector of bodySelectors) {
-    const bodyEl = root.querySelector(selector)
-    if (bodyEl) {
-      const extractedContent = bodyEl.innerHTML || bodyEl.text || ""
-      if (extractedContent.trim().length > body.length) {
-        body = extractedContent.trim()
+    let entryBody = ""
+    const template = entryEl.querySelector("message-content template")
+    if (template) {
+      entryBody = template.innerHTML?.trim() || ""
+    }
+    if (!entryBody) {
+      const contentEl = entryEl.querySelector(
+        "message-content, .entry__content, .trix-content",
+      )
+      if (contentEl) {
+        entryBody = contentEl.innerHTML?.trim() || contentEl.text?.trim() || ""
       }
+    }
+
+    if (entryId || entryBody) {
+      entries.push({
+        entryId,
+        from: entryFrom,
+        fromEmail: entryFromEmail,
+        to: entryTo.length > 0 ? entryTo : undefined,
+        cc: entryCc.length > 0 ? entryCc : undefined,
+        date: entryDate,
+        body: entryBody,
+      })
     }
   }
 
-  // If still no body, try to get excerpt/snippet as fallback
-  if (!body) {
-    const excerptEl = root.querySelector(".entry__excerpt, .posting__summary")
-    body = excerptEl?.text?.trim() || ""
+  const firstEntry = entries[0]
+  const from = firstEntry?.from || "Unknown"
+  const fromEmail = firstEntry?.fromEmail
+  const date = firstEntry?.date
+  const body = entries.map((e) => e.body).join("\n\n")
+
+  // Fallback if no .entry--sheet elements found (e.g. single-entry views)
+  let fallbackBody = body
+  if (!fallbackBody) {
+    const bodySelectors = [
+      "message-content template",
+      "message-content",
+      ".entry__content",
+      ".trix-content",
+    ]
+    for (const selector of bodySelectors) {
+      const bodyEl = root.querySelector(selector)
+      if (bodyEl) {
+        const extracted = bodyEl.innerHTML || bodyEl.text || ""
+        if (extracted.trim().length > fallbackBody.length) {
+          fallbackBody = extracted.trim()
+        }
+      }
+    }
+    if (!fallbackBody) {
+      const excerptEl = root.querySelector(".entry__excerpt, .posting__summary")
+      fallbackBody = excerptEl?.text?.trim() || ""
+    }
   }
 
-  // Extract date from entry time
-  const dateEl = root.querySelector(
-    ".entry__time time, .entry__time, time[datetime]",
-  )
-  const date = dateEl?.getAttribute("datetime") || dateEl?.text?.trim()
-
-  // Extract recipients from entry header
-  const toEls = root.querySelectorAll(
-    ".entry__recipients a, [class*='recipient'] a",
-  )
-  const to = toEls.map((el: HTMLElement) => el.text.trim()).filter(Boolean)
-
-  const ccEls = root.querySelectorAll("[class*='cc'] a")
-  const cc = ccEls.map((el: HTMLElement) => el.text.trim()).filter(Boolean)
-
-  // Extract thread/topic ID from URL or data attributes
   const threadId =
     root.querySelector("[data-topic-id]")?.getAttribute("data-topic-id") ||
     root
@@ -588,16 +640,24 @@ function extractEmailDetail(
       ?.getAttribute("href")
       ?.match(/\/topics\/(\d+)/)?.[1]
 
+  // Detect muted/ignored thread status
+  const muteNotice = root.querySelector(".island--topic-notice")
+  const muted =
+    muteNotice?.text?.includes("ignored") ||
+    !!root.querySelector(".action-group__action--unmute")
+
   return {
     id,
     from,
     fromEmail,
-    to: to.length > 0 ? to : undefined,
-    cc: cc.length > 0 ? cc : undefined,
+    to: firstEntry?.to,
+    cc: firstEntry?.cc,
     subject,
-    body,
+    body: fallbackBody || body,
     date,
     threadId,
+    entries: entries.length > 0 ? entries : undefined,
+    muted: muted || undefined,
   }
 }
 
@@ -828,11 +888,37 @@ export async function listLabelEmails(
   return listFolder(`label_${labelId}`, `/folders/${labelId}`, options)
 }
 
+export interface ReadOptions {
+  format?: "html" | "text"
+  forceRefresh?: boolean
+  maxEntries?: number
+}
+
+const messageIdCache = new Map<string, string>()
+
+export async function resolveMessageId(id: string): Promise<string> {
+  const cached = messageIdCache.get(id)
+  if (cached) return cached
+
+  try {
+    const html = await heyClient.fetchHtml(`/topics/${id}`)
+    const match = html.match(/\/messages\/(\d+)/)
+    if (match) {
+      messageIdCache.set(id, match[1])
+      return match[1]
+    }
+  } catch (err) {
+    console.error("[mcp-hey] resolveMessageId failed:", err)
+  }
+  return id
+}
+
 export async function readEmail(
   id: string,
-  format: "html" | "text" = "html",
-  forceRefresh = false,
+  options: ReadOptions = {},
 ): Promise<CachedResult<EmailDetail>> {
+  const { format = "html", forceRefresh = false, maxEntries } = options
+
   // Check cache first (only for HTML format)
   if (!forceRefresh && format === "html") {
     const cached = getCachedEmailDetail(id)
@@ -847,11 +933,92 @@ export async function readEmail(
   // Fetch from network - try /topics first (most common ID type), then /messages
   let content = ""
   const isRawText = format === "text"
+  let messageId = id
 
   if (format === "text") {
-    // For text format, only /messages supports .text extension
-    content = await heyClient.fetchHtml(`/messages/${id}.text`)
-  } else {
+    let entryMessageIds: string[] = []
+    try {
+      const topicHtml = await heyClient.fetchHtml(`/topics/${id}`)
+      const seen = new Set<string>()
+      for (const m of topicHtml.matchAll(/\/messages\/(\d+)/g)) {
+        if (!seen.has(m[1])) {
+          seen.add(m[1])
+          entryMessageIds.push(m[1])
+        }
+      }
+    } catch (err) {
+      console.error("[mcp-hey] Topic page fetch failed for", id, err)
+    }
+
+    if (entryMessageIds.length === 0) entryMessageIds = [id]
+    if (maxEntries) entryMessageIds = entryMessageIds.slice(0, maxEntries)
+    messageId = entryMessageIds[0]
+
+    // Cache the resolved message IDs so resolveMessageId can skip the fetch
+    if (entryMessageIds[0] !== id) {
+      messageIdCache.set(id, entryMessageIds[0])
+    }
+
+    // Fetch all entries in parallel (H4)
+    const entryResults = await Promise.all(
+      entryMessageIds.map(async (eid) => {
+        try {
+          const raw = await heyClient.fetchHtml(`/messages/${eid}.text`)
+          const parsed = parseRawEmailText(raw)
+          // Probe attachments from the already-fetched raw MIME (C1)
+          const probe = probeAttachmentsFromRaw(raw, eid)
+          const entry: ThreadEntry = {
+            entryId: eid,
+            from: parsed.from,
+            fromEmail: parsed.fromEmail,
+            to: parsed.to,
+            subject: parsed.subject,
+            date: parsed.date,
+            body: parsed.body,
+            attachments: probe.attachments,
+            calendar_invites: probe.calendar_invites,
+          }
+          return entry
+        } catch (err) {
+          console.error("[mcp-hey] Entry fetch failed for", eid, err)
+          return null
+        }
+      }),
+    )
+
+    const parsedEntries = entryResults.filter(
+      (e): e is ThreadEntry => e !== null,
+    )
+
+    const first = parsedEntries[0]
+    const subject = first?.subject || "(No subject)"
+    const combinedBody = parsedEntries.map((e) => e.body).join("\n\n---\n\n")
+
+    // Aggregate attachments from all entries
+    const allAttachments = parsedEntries.flatMap((e) => e.attachments ?? [])
+    const allCalendarInvites = parsedEntries.flatMap(
+      (e) => e.calendar_invites ?? [],
+    )
+
+    const email: EmailDetail = {
+      id,
+      from: first?.from || "Unknown",
+      fromEmail: first?.fromEmail,
+      to: first?.to,
+      subject,
+      body: combinedBody,
+      date: first?.date,
+      entries: parsedEntries.length > 0 ? parsedEntries : undefined,
+      attachments: allAttachments.length > 0 ? allAttachments : undefined,
+      calendar_invites:
+        allCalendarInvites.length > 0 ? allCalendarInvites : undefined,
+    }
+
+    cacheEmailDetail(email)
+    return { data: email, _cache: createNetworkMetadata() }
+  }
+
+  {
     // For HTML format, try multiple endpoints in order of likelihood
     // Hey.com uses different ID types for different resources:
     // - topicId: threads (conversations) at /topics/{id} - most common from listings
@@ -894,7 +1061,18 @@ export async function readEmail(
   // attachments arrays are simply omitted in that case. Calendar invites
   // are surfaced separately for triage - the body remains attachment-free.
   try {
-    const probe = await listAttachmentsForEmail(id)
+    // H5: Extract message ID from the already-fetched HTML content to avoid
+    // a redundant resolveMessageId call that re-fetches the topic page.
+    if (messageId === id) {
+      const contentMatch = content.match(/\/messages\/(\d+)/)
+      if (contentMatch) {
+        messageId = contentMatch[1]
+        messageIdCache.set(id, messageId)
+      } else {
+        messageId = await resolveMessageId(id)
+      }
+    }
+    const probe = await listAttachmentsForEmail(messageId)
     email.attachments = probe.attachments
     email.calendar_invites = probe.calendar_invites
   } catch (err) {
@@ -1007,54 +1185,4 @@ export async function searchEmails(
     data: emails,
     _cache: createNetworkMetadata(),
   }
-}
-
-// Legacy exports for backward compatibility (without cache metadata)
-export async function listImboxLegacy(limit = 25, page = 1): Promise<Email[]> {
-  const result = await listImbox({ limit, page })
-  return result.data
-}
-
-export async function listFeedLegacy(limit = 25, page = 1): Promise<Email[]> {
-  const result = await listFeed({ limit, page })
-  return result.data
-}
-
-export async function listPaperTrailLegacy(
-  limit = 25,
-  page = 1,
-): Promise<Email[]> {
-  const result = await listPaperTrail({ limit, page })
-  return result.data
-}
-
-export async function listSetAsideLegacy(): Promise<Email[]> {
-  const result = await listSetAside()
-  return result.data
-}
-
-export async function listReplyLaterLegacy(): Promise<Email[]> {
-  const result = await listReplyLater()
-  return result.data
-}
-
-export async function readEmailLegacy(
-  id: string,
-  format: "html" | "text" = "html",
-): Promise<EmailDetail> {
-  const result = await readEmail(id, format)
-  return result.data
-}
-
-export async function searchEmailsLegacy(
-  query: string,
-  limit = 25,
-): Promise<Email[]> {
-  const result = await searchEmails(query, { limit })
-  return result.data
-}
-
-export async function listScreenerLegacy(): Promise<Email[]> {
-  const result = await listScreener()
-  return result.data
 }

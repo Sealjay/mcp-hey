@@ -26,7 +26,9 @@ import {
   bubbleUpIfNoReply,
   ignoreThread,
   markAsNotSpam,
+  markAsRead,
   markAsSpam,
+  markAsUnread,
   markAsUnseen,
   moveTo,
   popBubble,
@@ -39,6 +41,7 @@ import {
   screenIn,
   screenInById,
   screenOut,
+  screenOutById,
   setAside,
   trashEmail,
   unignoreThread,
@@ -61,7 +64,12 @@ import {
   readEmail,
   searchEmails,
 } from "./tools/read"
-import { forwardEmail, replyToEmail, sendEmail } from "./tools/send"
+import {
+  forwardEmail,
+  isValidEmail,
+  replyToEmail,
+  sendEmail,
+} from "./tools/send"
 
 /**
  * Validate and clamp a numeric parameter within bounds.
@@ -114,17 +122,14 @@ function validateQuery(value: unknown): string | null {
 
 /**
  * Validate an email address.
+ * Delegates to the shared isValidEmail from tools/send.
  */
 function validateEmail(value: unknown): string | null {
   if (typeof value !== "string") {
     return null
   }
   const trimmed = value.trim().toLowerCase()
-  // Basic email validation
-  if (trimmed.length === 0 || trimmed.length > 254) {
-    return null
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+  if (!isValidEmail(trimmed)) {
     return null
   }
   return trimmed
@@ -160,12 +165,18 @@ function validateSavePath(value: unknown): string | null | undefined {
 const tools: Tool[] = [
   // Reading tools
   {
-    name: "hey_list_imbox",
+    name: "hey_list_emails",
     description:
-      "List emails in the Hey.com Imbox (important emails). Returns cached results unless force_refresh=true.",
+      "List emails in a Hey.com folder/view. Returns cached results unless force_refresh=true. Each email includes id, topicId, postingId, entryId, from, subject, date, and unread status.",
     inputSchema: {
       type: "object" as const,
       properties: {
+        folder: {
+          type: "string",
+          enum: ["imbox", "feed", "paper_trail", "trash", "spam", "drafts"],
+          description:
+            "The folder/view to list emails from: imbox (important), feed (newsletters), paper_trail (receipts), trash, spam, or drafts",
+        },
         limit: {
           type: "number",
           description: "Maximum number of emails to return (default: 25)",
@@ -179,6 +190,7 @@ const tools: Tool[] = [
           description: "Bypass cache and fetch fresh data (default: false)",
         },
       },
+      required: ["folder"],
     },
   },
   {
@@ -188,50 +200,6 @@ const tools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        force_refresh: {
-          type: "boolean",
-          description: "Bypass cache and fetch fresh data (default: false)",
-        },
-      },
-    },
-  },
-  {
-    name: "hey_list_feed",
-    description:
-      "List emails in The Feed (newsletters, notifications). Returns cached results unless force_refresh=true.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        limit: {
-          type: "number",
-          description: "Maximum number of emails to return (default: 25)",
-        },
-        page: {
-          type: "number",
-          description: "Page number for pagination (default: 1)",
-        },
-        force_refresh: {
-          type: "boolean",
-          description: "Bypass cache and fetch fresh data (default: false)",
-        },
-      },
-    },
-  },
-  {
-    name: "hey_list_paper_trail",
-    description:
-      "List emails in Paper Trail (receipts, confirmations). Returns cached results unless force_refresh=true.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        limit: {
-          type: "number",
-          description: "Maximum number of emails to return (default: 25)",
-        },
-        page: {
-          type: "number",
-          description: "Page number for pagination (default: 1)",
-        },
         force_refresh: {
           type: "boolean",
           description: "Bypass cache and fetch fresh data (default: false)",
@@ -282,74 +250,9 @@ const tools: Tool[] = [
     },
   },
   {
-    name: "hey_list_trash",
-    description:
-      "List emails in the Trash. Returns cached results unless force_refresh=true.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        limit: {
-          type: "number",
-          description: "Maximum number of emails to return (default: 25)",
-        },
-        page: {
-          type: "number",
-          description: "Page number for pagination (default: 1)",
-        },
-        force_refresh: {
-          type: "boolean",
-          description: "Bypass cache and fetch fresh data (default: false)",
-        },
-      },
-    },
-  },
-  {
-    name: "hey_list_spam",
-    description:
-      "List emails in the Spam folder. Returns cached results unless force_refresh=true.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        limit: {
-          type: "number",
-          description: "Maximum number of emails to return (default: 25)",
-        },
-        page: {
-          type: "number",
-          description: "Page number for pagination (default: 1)",
-        },
-        force_refresh: {
-          type: "boolean",
-          description: "Bypass cache and fetch fresh data (default: false)",
-        },
-      },
-    },
-  },
-  {
-    name: "hey_list_drafts",
-    description:
-      "List draft emails. Returns cached results unless force_refresh=true.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        limit: {
-          type: "number",
-          description: "Maximum number of drafts to return (default: 25)",
-        },
-        page: {
-          type: "number",
-          description: "Page number for pagination (default: 1)",
-        },
-        force_refresh: {
-          type: "boolean",
-          description: "Bypass cache and fetch fresh data (default: false)",
-        },
-      },
-    },
-  },
-  {
     name: "hey_list_labels",
-    description: "List all labels/folders in Hey.com.",
+    description:
+      "List all labels/folders in Hey.com. Returns array of {id, name, color?}. Use the id with hey_label or hey_list_label_emails.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -384,7 +287,8 @@ const tools: Tool[] = [
   },
   {
     name: "hey_list_collections",
-    description: "List all collections in Hey.com.",
+    description:
+      "List all collections in Hey.com. Returns array of {id, name}. Use the id with hey_collection or hey_list_collection_emails.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -418,97 +322,74 @@ const tools: Tool[] = [
     },
   },
   {
-    name: "hey_add_label",
-    description: "Add a label to an email thread",
+    name: "hey_label",
+    description:
+      "Add or remove a label on an email thread. Returns {success, error?}. Use hey_list_labels to discover available label IDs.",
     inputSchema: {
       type: "object" as const,
       properties: {
         topic_id: {
           type: "string",
-          description: "The topic/thread ID to label",
+          description: "The topic/thread ID to label or unlabel",
         },
         label_id: {
           type: "string",
           description:
-            "The label ID to apply (use hey_list_labels to see available labels)",
+            "The label ID to add or remove (use hey_list_labels to see available labels)",
+        },
+        action: {
+          type: "string",
+          enum: ["add", "remove"],
+          description: "Whether to add or remove the label",
         },
       },
-      required: ["topic_id", "label_id"],
+      required: ["topic_id", "label_id", "action"],
     },
   },
   {
-    name: "hey_remove_label",
+    name: "hey_collection",
     description:
-      "Remove a label from an email thread. Idempotent — no error if the label is not currently applied. Returns {success, error?}. Use hey_list_labels to discover available label IDs.",
+      "Add or remove an email thread from a collection. Returns {success, error?}. Use hey_list_collections to discover collection IDs.",
     inputSchema: {
       type: "object" as const,
       properties: {
         topic_id: {
           type: "string",
-          description: "The topic/thread ID to unlabel",
-        },
-        label_id: {
-          type: "string",
-          description: "The label ID to remove",
-        },
-      },
-      required: ["topic_id", "label_id"],
-    },
-  },
-  {
-    name: "hey_add_to_collection",
-    description:
-      "Add an email thread to a collection. Idempotent — no error if already present. Returns {success, error?}. Use hey_list_collections to find collection IDs.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        topic_id: {
-          type: "string",
-          description: "The topic/thread ID to add to the collection",
+          description:
+            "The topic/thread ID to add to or remove from the collection",
         },
         collection_id: {
           type: "string",
           description:
             "The collection ID (use hey_list_collections to see available collections)",
         },
-      },
-      required: ["topic_id", "collection_id"],
-    },
-  },
-  {
-    name: "hey_remove_from_collection",
-    description:
-      "Remove an email thread from a collection. Idempotent — no error if not in the collection. Returns {success, error?}. Use hey_list_collections to find collection IDs.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        topic_id: {
+        action: {
           type: "string",
-          description: "The topic/thread ID to remove from the collection",
-        },
-        collection_id: {
-          type: "string",
-          description: "The collection ID",
+          enum: ["add", "remove"],
+          description:
+            "Whether to add or remove the thread from the collection",
         },
       },
-      required: ["topic_id", "collection_id"],
+      required: ["topic_id", "collection_id", "action"],
     },
   },
   {
     name: "hey_read_email",
     description:
-      "Read the full content of an email by ID. Returns cached content unless force_refresh=true. Response includes `attachments` (metadata only - id, filename, size, mime, is_calendar) and `calendar_invites` (parsed .ics summaries) when present. Use hey_download_attachment or hey_get_calendar_invite to retrieve content.",
+      "Read an email thread's full content. Returns all messages in the thread via entries[] array (each with entryId, from, to, cc, date, body). Also returns attachments[] metadata and calendar_invites[] when present — use hey_download_attachment to save files to disk, or hey_get_calendar_invite to parse .ics details. Use format='html' (default) for rich content with thread entries, or format='text' for decoded RFC822 plain text of the first message.",
     inputSchema: {
       type: "object" as const,
       properties: {
         id: {
           type: "string",
-          description: "The email ID to read",
+          description:
+            "The topic/thread ID or entry ID to read (use topicId from list operations for full threads)",
         },
         format: {
           type: "string",
           enum: ["html", "text"],
-          description: "Format to return (default: html)",
+          description:
+            "html (default): rich HTML with all thread entries. text: decoded plain text of the first message only",
         },
         force_refresh: {
           type: "boolean",
@@ -521,13 +402,14 @@ const tools: Tool[] = [
   {
     name: "hey_download_attachment",
     description:
-      "Download a single attachment from an email and save it to disk. Decodes the base64-encoded MIME part and writes it to the supplied path (or ~/Downloads/hey-attachments/<email_id>/<filename> by default). Use the attachment_id from hey_read_email's `attachments` array.",
+      "Download a single attachment from an email and save it to disk. First call hey_read_email to get the attachments[] array with IDs, filenames, and sizes, then call this tool with the attachment_id to save the file. Returns {local_path, filename, size, mime}.",
     inputSchema: {
       type: "object" as const,
       properties: {
         email_id: {
           type: "string",
-          description: "The email ID containing the attachment",
+          description:
+            "The email's topic or entry ID (same ID used with hey_read_email — topic IDs are resolved automatically)",
         },
         attachment_id: {
           type: "string",
@@ -537,7 +419,7 @@ const tools: Tool[] = [
         save_path: {
           type: "string",
           description:
-            "Optional absolute path or directory to save into. Defaults to ~/Downloads/hey-attachments/<email_id>/<filename>. Trailing '/' is treated as a directory.",
+            "Optional path or directory to save into. Must be within ~/. Defaults to ~/Downloads/hey-attachments/<date>/<filename>. Trailing '/' is treated as a directory. Duplicate filenames are auto-numbered (invite-1.ics, invite-2.ics).",
         },
       },
       required: ["email_id", "attachment_id"],
@@ -546,13 +428,14 @@ const tools: Tool[] = [
   {
     name: "hey_get_calendar_invite",
     description:
-      "Extract and parse a calendar invite (.ics) from an email. Returns title, start, end, location, attendees, organizer and the raw ICS body. When an email has multiple .ics parts, supply attachment_id; otherwise the first calendar part is used.",
+      "Extract and parse a calendar invite (.ics) from an email. First call hey_read_email — if calendar_invites[] is present, call this tool to get full details: title, start, end, location, attendees, organizer, description, and raw_ics. To save the .ics file to disk, use hey_download_attachment instead.",
     inputSchema: {
       type: "object" as const,
       properties: {
         email_id: {
           type: "string",
-          description: "The email ID containing the calendar invite",
+          description:
+            "The email's topic or entry ID (same ID used with hey_read_email — topic IDs are resolved automatically)",
         },
         attachment_id: {
           type: "string",
@@ -751,81 +634,72 @@ const tools: Tool[] = [
     },
   },
   {
-    name: "hey_screen_in",
-    description: "Approve a sender from the Screener (allow future emails)",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        sender_email: {
-          type: "string",
-          description: "The sender email address to approve",
-        },
-      },
-      required: ["sender_email"],
-    },
-  },
-  {
-    name: "hey_screen_out",
-    description: "Reject a sender from the Screener (block future emails)",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        sender_email: {
-          type: "string",
-          description: "The sender email address to reject",
-        },
-      },
-      required: ["sender_email"],
-    },
-  },
-  {
-    name: "hey_screen_in_by_id",
+    name: "hey_screen",
     description:
-      "Approve a sender from the Screener by clearance ID (alternative to sender email)",
+      "Approve or reject a first-time sender from the Screener by email address. Approve: the sender's current and future emails will arrive in the Imbox. Reject: the sender is PERMANENTLY blocked — all their emails are silently discarded and this cannot be undone via MCP. Returns {success, error?}. Use hey_list_screener to see pending senders, or hey_screen_by_id to act on clearance IDs directly.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sender_email: {
+          type: "string",
+          description: "The sender's email address",
+        },
+        action: {
+          type: "string",
+          enum: ["approve", "reject"],
+          description:
+            "approve: allow this sender's emails through. reject: permanently block this sender (DESTRUCTIVE, irreversible)",
+        },
+      },
+      required: ["sender_email", "action"],
+    },
+  },
+  {
+    name: "hey_screen_by_id",
+    description:
+      "Approve or reject a first-time sender from the Screener by clearance ID. Approve: allows future emails from this sender. Reject: PERMANENTLY blocks the sender — cannot be undone via MCP. Returns {success, error?}. Use hey_list_screener to get clearance IDs.",
     inputSchema: {
       type: "object" as const,
       properties: {
         clearance_id: {
           type: "string",
-          description: "The clearance ID from the screener list",
+          description: "The clearance ID from hey_list_screener",
+        },
+        action: {
+          type: "string",
+          enum: ["approve", "reject"],
+          description:
+            "approve: allow this sender's emails through. reject: permanently block this sender (DESTRUCTIVE, irreversible)",
         },
       },
-      required: ["clearance_id"],
+      required: ["clearance_id", "action"],
     },
   },
   {
-    name: "hey_trash",
+    name: "hey_set_status",
     description:
-      "Move an email thread to Trash. Reversible via hey_restore. Returns {success, error?}. Use for emails to discard; use hey_spam for unsolicited mail, or hey_ignore_thread to mute without removing.",
+      "Change an email thread's status. Returns {success, error?}. Trash and spam are reversible via restore and unspam actions respectively. DESTRUCTIVE: trash removes from Imbox, spam blocks the sender.",
     inputSchema: {
       type: "object" as const,
       properties: {
         id: {
           type: "string",
-          description: "The topic/thread ID to trash",
+          description: "The topic/thread ID (use topicId from list operations)",
         },
-      },
-      required: ["id"],
-    },
-  },
-  {
-    name: "hey_restore",
-    description: "Restore an email thread from Trash",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        id: {
+        action: {
           type: "string",
-          description: "The topic/thread ID to restore",
+          enum: ["trash", "restore", "spam", "unspam"],
+          description:
+            "The status action: trash (move to Trash), restore (recover from Trash), spam (mark as spam and block sender), unspam (restore from spam folder)",
         },
       },
-      required: ["id"],
+      required: ["id", "action"],
     },
   },
   {
     name: "hey_move_to",
     description:
-      "Move an email thread between Hey.com views: imbox, feed, or paper_trail. Returns {success, error?}. Use paper_trail for receipts/automated mail, feed for newsletters, imbox to restore. Reversible by moving to a different destination. Does not affect trash, spam, or screener — use hey_trash, hey_spam, or hey_screen_out for those.",
+      "Move an email thread between Hey.com views: imbox, feed, or paper_trail. Returns {success, error?}. Use paper_trail for receipts/automated mail, feed for newsletters, imbox to restore. Reversible by moving to a different destination. Does not affect trash, spam, or screener — use hey_set_status or hey_screen for those.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -845,36 +719,6 @@ const tools: Tool[] = [
     },
   },
   {
-    name: "hey_spam",
-    description:
-      "Mark an email thread as spam and move to spam folder. Reversible via hey_not_spam. Returns {success, error?}. Use for unsolicited mail; use hey_trash for mail you might revisit, or hey_ignore_thread to mute without removing.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        id: {
-          type: "string",
-          description: "The topic/thread ID to mark as spam",
-        },
-      },
-      required: ["id"],
-    },
-  },
-  {
-    name: "hey_not_spam",
-    description:
-      "Restore an email thread from the spam folder back to inbox. Reversible via hey_spam. Returns {success, error?}. Different from hey_restore which recovers from trash, not spam.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        id: {
-          type: "string",
-          description: "The topic/thread ID to mark as not spam",
-        },
-      },
-      required: ["id"],
-    },
-  },
-  {
     name: "hey_mark_unseen",
     description:
       "Mark a thread as unseen/unread to reset its read status. Returns {success, error?}. Reading the email via hey_read_email implicitly marks it as seen again.",
@@ -887,6 +731,27 @@ const tools: Tool[] = [
         },
       },
       required: ["id"],
+    },
+  },
+  {
+    name: "hey_read_status",
+    description:
+      "Set the read/unread status of an email entry. Returns {success, error?}. Reversible by calling again with the opposite status. Operates on individual entries (use entryId), not whole threads. For marking an entire thread as unseen, use hey_mark_unseen instead.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: {
+          type: "string",
+          description:
+            "The entry ID to update (use entryId from list operations)",
+        },
+        status: {
+          type: "string",
+          enum: ["read", "unread"],
+          description: "Target status: read or unread",
+        },
+      },
+      required: ["id", "status"],
     },
   },
   {
@@ -962,32 +827,24 @@ const tools: Tool[] = [
     },
   },
   {
-    name: "hey_ignore_thread",
+    name: "hey_thread_mute",
     description:
-      "Mute a thread to stop receiving notifications (thread stays in inbox). Reversible via hey_unignore_thread. Returns {success, error?}. Use hey_trash to remove entirely, or hey_spam for unsolicited mail.",
+      "Mute or unmute a thread (called 'Ignore' in Hey.com's UI). Muting stops notifications for the thread but keeps it in its current view — the thread is not moved or deleted. Returns {success, error?}. Reversible by calling with the opposite action. To check if a thread is currently muted, use hey_read_email — the response includes a 'muted' field.",
     inputSchema: {
       type: "object" as const,
       properties: {
         posting_id: {
           type: "string",
-          description: "The posting ID to ignore",
+          description:
+            "The posting ID of the thread (use postingId from list operations)",
         },
-      },
-      required: ["posting_id"],
-    },
-  },
-  {
-    name: "hey_unignore_thread",
-    description: "Un-ignore/unmute a thread (resume receiving notifications)",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        posting_id: {
+        action: {
           type: "string",
-          description: "The posting ID to un-ignore",
+          enum: ["mute", "unmute"],
+          description: "mute to stop notifications, unmute to resume them",
         },
       },
-      required: ["posting_id"],
+      required: ["posting_id", "action"],
     },
   },
 
@@ -1013,7 +870,7 @@ const tools: Tool[] = [
 const server = new Server(
   {
     name: "mcp-hey",
-    version: "0.3.0",
+    version: "0.3.1",
   },
   {
     capabilities: {
@@ -1036,30 +893,52 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     switch (name) {
       // Reading tools
-      case "hey_list_imbox": {
+      case "hey_list_emails": {
+        const folder = args?.folder as string
+        const validFolders = [
+          "imbox",
+          "feed",
+          "paper_trail",
+          "trash",
+          "spam",
+          "drafts",
+        ]
+        if (!folder || !validFolders.includes(folder)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: folder is required and must be one of: imbox, feed, paper_trail, trash, spam, drafts",
+              },
+            ],
+            isError: true,
+          }
+        }
         const limit = clampNumber(args?.limit, 25, 1, 100)
         const page = clampNumber(args?.page, 1, 1, 1000)
         const forceRefresh = (args?.force_refresh as boolean) ?? false
-        result = await listImbox({ limit, page, forceRefresh })
+        const options = { limit, page, forceRefresh }
+        const folderFns: Record<
+          string,
+          (opts: {
+            limit: number
+            page: number
+            forceRefresh: boolean
+          }) => Promise<unknown>
+        > = {
+          imbox: listImbox,
+          feed: listFeed,
+          paper_trail: listPaperTrail,
+          trash: listTrash,
+          spam: listSpam,
+          drafts: listDrafts,
+        }
+        result = await folderFns[folder](options)
         break
       }
       case "hey_imbox_summary": {
         const forceRefresh = (args?.force_refresh as boolean) ?? false
         result = await getImboxSummary({ forceRefresh })
-        break
-      }
-      case "hey_list_feed": {
-        const limit = clampNumber(args?.limit, 25, 1, 100)
-        const page = clampNumber(args?.page, 1, 1, 1000)
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        result = await listFeed({ limit, page, forceRefresh })
-        break
-      }
-      case "hey_list_paper_trail": {
-        const limit = clampNumber(args?.limit, 25, 1, 100)
-        const page = clampNumber(args?.page, 1, 1, 1000)
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        result = await listPaperTrail({ limit, page, forceRefresh })
         break
       }
       case "hey_list_set_aside": {
@@ -1075,27 +954,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "hey_list_screener": {
         const forceRefresh = (args?.force_refresh as boolean) ?? false
         result = await listScreener({ forceRefresh })
-        break
-      }
-      case "hey_list_trash": {
-        const limit = clampNumber(args?.limit, 25, 1, 100)
-        const page = clampNumber(args?.page, 1, 1, 1000)
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        result = await listTrash({ limit, page, forceRefresh })
-        break
-      }
-      case "hey_list_spam": {
-        const limit = clampNumber(args?.limit, 25, 1, 100)
-        const page = clampNumber(args?.page, 1, 1, 1000)
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        result = await listSpam({ limit, page, forceRefresh })
-        break
-      }
-      case "hey_list_drafts": {
-        const limit = clampNumber(args?.limit, 25, 1, 100)
-        const page = clampNumber(args?.page, 1, 1, 1000)
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        result = await listDrafts({ limit, page, forceRefresh })
         break
       }
       case "hey_list_labels": {
@@ -1148,9 +1006,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         })
         break
       }
-      case "hey_add_label": {
+      case "hey_label": {
         const topicId = validateId(args?.topic_id)
         const labelId = validateId(args?.label_id)
+        const action = args?.action as string
         if (!topicId) {
           return {
             content: [
@@ -1173,40 +1032,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
-        result = await addLabel(topicId, labelId)
-        break
-      }
-      case "hey_remove_label": {
-        const topicId = validateId(args?.topic_id)
-        const labelId = validateId(args?.label_id)
-        if (!topicId) {
+        if (!action || !["add", "remove"].includes(action)) {
           return {
             content: [
               {
                 type: "text",
-                text: "Error: topic_id is required and must be valid",
+                text: "Error: action is required (add or remove)",
               },
             ],
             isError: true,
           }
         }
-        if (!labelId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: label_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
-        }
-        result = await removeLabel(topicId, labelId)
+        result =
+          action === "add"
+            ? await addLabel(topicId, labelId)
+            : await removeLabel(topicId, labelId)
         break
       }
-      case "hey_add_to_collection": {
+      case "hey_collection": {
         const topicId = validateId(args?.topic_id)
         const collectionId = validateId(args?.collection_id)
+        const action = args?.action as string
         if (!topicId) {
           return {
             content: [
@@ -1229,41 +1075,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
-        result = await addToCollection(topicId, collectionId)
-        break
-      }
-      case "hey_remove_from_collection": {
-        const topicId = validateId(args?.topic_id)
-        const collectionId = validateId(args?.collection_id)
-        if (!topicId) {
+        if (!action || !["add", "remove"].includes(action)) {
           return {
             content: [
               {
                 type: "text",
-                text: "Error: topic_id is required and must be valid",
+                text: "Error: action is required (add or remove)",
               },
             ],
             isError: true,
           }
         }
-        if (!collectionId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: collection_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
-        }
-        result = await removeFromCollection(topicId, collectionId)
+        result =
+          action === "add"
+            ? await addToCollection(topicId, collectionId)
+            : await removeFromCollection(topicId, collectionId)
         break
       }
       case "hey_read_email": {
         const id = validateId(args?.id)
         const format = (args?.format as "html" | "text") ?? "html"
         const forceRefresh = (args?.force_refresh as boolean) ?? false
+        const maxEntries = args?.max_entries
+          ? Math.max(1, Math.min(100, Number(args.max_entries)))
+          : undefined
         if (!id) {
           return {
             content: [
@@ -1272,7 +1107,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
-        result = await readEmail(id, format, forceRefresh)
+        result = await readEmail(id, { format, forceRefresh, maxEntries })
         break
       }
       case "hey_download_attachment": {
@@ -1559,8 +1394,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await removeFromReplyLater(postingId)
         break
       }
-      case "hey_screen_in": {
+      case "hey_screen": {
         const senderEmail = validateEmail(args?.sender_email)
+        const action = args?.action as string
         if (!senderEmail) {
           return {
             content: [
@@ -1572,27 +1408,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
-        result = await screenIn(senderEmail)
-        break
-      }
-      case "hey_screen_out": {
-        const senderEmail = validateEmail(args?.sender_email)
-        if (!senderEmail) {
+        if (!action || !["approve", "reject"].includes(action)) {
           return {
             content: [
               {
                 type: "text",
-                text: "Error: sender_email is required and must be a valid email",
+                text: "Error: action is required (approve or reject)",
               },
             ],
             isError: true,
           }
         }
-        result = await screenOut(senderEmail)
+        result =
+          action === "approve"
+            ? await screenIn(senderEmail)
+            : await screenOut(senderEmail)
         break
       }
-      case "hey_screen_in_by_id": {
+      case "hey_screen_by_id": {
         const clearanceId = validateId(args?.clearance_id)
+        const action = args?.action as string
         if (!clearanceId) {
           return {
             content: [
@@ -1604,11 +1439,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
-        result = await screenInById(clearanceId)
+        if (!action || !["approve", "reject"].includes(action)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: action is required (approve or reject)",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result =
+          action === "approve"
+            ? await screenInById(clearanceId)
+            : await screenOutById(clearanceId)
         break
       }
-      case "hey_trash": {
+      case "hey_set_status": {
         const id = validateId(args?.id)
+        const action = args?.action as string
         if (!id) {
           return {
             content: [
@@ -1617,20 +1467,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
-        result = await trashEmail(id)
-        break
-      }
-      case "hey_restore": {
-        const id = validateId(args?.id)
-        if (!id) {
+        if (
+          !action ||
+          !["trash", "restore", "spam", "unspam"].includes(action)
+        ) {
           return {
             content: [
-              { type: "text", text: "Error: id is required and must be valid" },
+              {
+                type: "text",
+                text: "Error: action is required (trash, restore, spam, or unspam)",
+              },
             ],
             isError: true,
           }
         }
-        result = await restoreFromTrash(id)
+        const statusFns: Record<string, (id: string) => Promise<unknown>> = {
+          trash: trashEmail,
+          restore: restoreFromTrash,
+          spam: markAsSpam,
+          unspam: markAsNotSpam,
+        }
+        result = await statusFns[action](id)
         break
       }
       case "hey_move_to": {
@@ -1664,32 +1521,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await moveTo(id, destination)
         break
       }
-      case "hey_spam": {
-        const id = validateId(args?.id)
-        if (!id) {
-          return {
-            content: [
-              { type: "text", text: "Error: id is required and must be valid" },
-            ],
-            isError: true,
-          }
-        }
-        result = await markAsSpam(id)
-        break
-      }
-      case "hey_not_spam": {
-        const id = validateId(args?.id)
-        if (!id) {
-          return {
-            content: [
-              { type: "text", text: "Error: id is required and must be valid" },
-            ],
-            isError: true,
-          }
-        }
-        result = await markAsNotSpam(id)
-        break
-      }
       case "hey_mark_unseen": {
         const id = validateId(args?.id)
         if (!id) {
@@ -1701,6 +1532,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
         result = await markAsUnseen(id)
+        break
+      }
+      case "hey_read_status": {
+        const id = validateId(args?.id)
+        const status = args?.status as "read" | "unread"
+        if (!id) {
+          return {
+            content: [
+              { type: "text", text: "Error: id is required and must be valid" },
+            ],
+            isError: true,
+          }
+        }
+        if (!status || !["read", "unread"].includes(status)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: status is required (read or unread)",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result =
+          status === "read" ? await markAsRead(id) : await markAsUnread(id)
         break
       }
       case "hey_bubble_up": {
@@ -1785,8 +1642,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await popBubble(postingId)
         break
       }
-      case "hey_ignore_thread": {
+      case "hey_thread_mute": {
         const postingId = validateId(args?.posting_id)
+        const action = args?.action as string
         if (!postingId) {
           return {
             content: [
@@ -1798,23 +1656,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
-        result = await ignoreThread(postingId)
-        break
-      }
-      case "hey_unignore_thread": {
-        const postingId = validateId(args?.posting_id)
-        if (!postingId) {
+        if (!action || !["mute", "unmute"].includes(action)) {
           return {
             content: [
               {
                 type: "text",
-                text: "Error: posting_id is required and must be valid",
+                text: "Error: action is required (mute or unmute)",
               },
             ],
             isError: true,
           }
         }
-        result = await unignoreThread(postingId)
+        result =
+          action === "mute"
+            ? await ignoreThread(postingId)
+            : await unignoreThread(postingId)
         break
       }
 

@@ -75,7 +75,7 @@ const accountInfoCache: { value: AccountInfo | null } = { value: null }
 /**
  * Validate an email address format.
  */
-function isValidEmail(email: string): boolean {
+export function isValidEmail(email: string): boolean {
   const trimmed = email.trim().toLowerCase()
   if (trimmed.length === 0 || trimmed.length > 254) {
     return false

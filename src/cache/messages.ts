@@ -3,6 +3,7 @@
  * Provides cache-first access to email data with TTL-based freshness.
  */
 
+import type { AttachmentMeta, CalendarInviteMeta } from "../tools/attachments"
 import type { Email, EmailDetail } from "../tools/read"
 import {
   execute,
@@ -231,6 +232,35 @@ export function getCachedEmailDetail(
     return null
   }
 
+  const attachmentRows = query<{
+    id: string
+    filename: string | null
+    content_type: string | null
+    size: number | null
+  }>(
+    "SELECT id, filename, content_type, size FROM attachments WHERE message_id = ?",
+    [id],
+  )
+
+  const attachments: AttachmentMeta[] = attachmentRows.map((row) => {
+    const mime = row.content_type || "application/octet-stream"
+    return {
+      id: row.id,
+      filename: row.filename || "attachment",
+      size: row.size || 0,
+      mime,
+      is_calendar: /^text\/calendar/i.test(mime),
+    }
+  })
+
+  const calendarInvites: CalendarInviteMeta[] = attachments
+    .filter((a) => a.is_calendar)
+    .map((a) => ({
+      id: a.id,
+      filename: a.filename,
+      attendees: [],
+    }))
+
   const email: EmailDetail = {
     id: message.id,
     from: message.sender_name || "Unknown",
@@ -241,6 +271,8 @@ export function getCachedEmailDetail(
       ? new Date(message.received_at * 1000).toISOString()
       : undefined,
     threadId: message.thread_id || undefined,
+    attachments: attachments.length > 0 ? attachments : undefined,
+    calendar_invites: calendarInvites.length > 0 ? calendarInvites : undefined,
   }
 
   return {
@@ -292,13 +324,23 @@ export function cacheEmailDetail(email: EmailDetail): void {
     execute(
       `INSERT OR REPLACE INTO message_bodies (message_id, body_html, body_text, cached_at, stale)
        VALUES (?, ?, ?, ?, 0)`,
-      [
-        email.id,
-        email.body,
-        null, // Could extract text version if needed
-        now,
-      ],
+      [email.id, email.body, null, now],
     )
+
+    // Cache attachment metadata
+    if (email.attachments && email.attachments.length > 0) {
+      execute("DELETE FROM attachments WHERE message_id = ?", [email.id])
+      for (const att of email.attachments) {
+        execute(
+          `INSERT OR REPLACE INTO attachments (id, message_id, filename, content_type, size)
+           VALUES (?, ?, ?, ?, ?)`,
+          [att.id, email.id, att.filename, att.mime, att.size],
+        )
+      }
+      execute("UPDATE messages SET has_attachments = 1 WHERE id = ?", [
+        email.id,
+      ])
+    }
   })
 }
 
@@ -422,6 +464,7 @@ export function invalidateForAction(
     | "unmute"
     | "collection"
     | "label"
+    | "feed"
     | "paper_trail",
   messageId?: string,
 ): void {
@@ -544,8 +587,50 @@ export function invalidateForAction(
   // Always invalidate search cache on mutations
   execute("DELETE FROM search_cache WHERE cached_at < ?", [now])
 
-  // Invalidate folder HTML cache (used by imbox summary)
-  execute("DELETE FROM folder_html")
+  // Invalidate folder HTML cache only for affected folders
+  const affectedFolders: string[] = (() => {
+    switch (action) {
+      case "archive":
+      case "set_aside":
+      case "reply_later":
+        return ["imbox", "set_aside", "reply_later"]
+      case "delete":
+        return ["imbox", "feed", "paper_trail"]
+      case "send":
+      case "reply":
+      case "forward":
+        return ["sent", "imbox"]
+      case "trash":
+        return ["imbox", "trash", "feed", "paper_trail"]
+      case "restore":
+        return ["imbox", "trash", "spam"]
+      case "spam":
+        return ["imbox", "spam", "feed", "paper_trail"]
+      case "bubble_up":
+        return ["set_aside", "imbox"]
+      case "mute":
+      case "unmute":
+        return ["imbox"]
+      case "collection":
+        return ["imbox"]
+      case "label":
+        return ["imbox"]
+      case "paper_trail":
+        return ["imbox", "paper_trail"]
+      case "feed":
+        return ["imbox", "feed"]
+      default:
+        return ["imbox"]
+    }
+  })()
+
+  if (affectedFolders.length > 0) {
+    const placeholders = affectedFolders.map(() => "?").join(",")
+    execute(
+      `DELETE FROM folder_html WHERE folder IN (${placeholders})`,
+      affectedFolders,
+    )
+  }
 }
 
 /**

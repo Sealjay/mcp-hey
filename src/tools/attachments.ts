@@ -15,6 +15,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import { heyClient } from "../hey-client"
+import { resolveMessageId } from "./read"
 
 export interface AttachmentMeta {
   /** Stable per-message identifier ("part-{n}" indexed from the multipart walk). */
@@ -314,7 +315,7 @@ function sanitiseFilename(name: string): string {
   const base = name.replace(/^.*[\\/]/, "").trim()
   // Replace forbidden characters and ASCII control bytes (0x00-0x1f) with
   // underscores. We iterate so the linter does not flag a control-char range
-  // in the regex, but the behaviour is identical to /[ -<>:"/\\|?*]/g.
+  // in the regex, but the behaviour is identical to /[ -<>:"/\\|?*]/g.
   let safe = ""
   for (const ch of base) {
     const code = ch.charCodeAt(0)
@@ -337,16 +338,14 @@ function pureMime(contentType: string | undefined): string {
 }
 
 /**
- * Fetch the raw RFC822 message and walk its multipart structure.
- * Returns the parsed parts plus a list of attachment parts and their
- * stable per-message IDs (`part-1`, `part-2`, ...).
+ * Walk an already-fetched raw MIME string and return parsed parts plus
+ * attachment metadata. This avoids a redundant network fetch when the
+ * caller has already retrieved the `.text` content.
  */
-async function fetchAndWalkRawMessage(emailId: string): Promise<{
+export function walkRawMime(raw: string): {
   parts: MimePart[]
   attachmentParts: Array<{ id: string; index: number; part: MimePart }>
-}> {
-  // Hey's `.text` endpoint returns the raw RFC822 source for a message id.
-  const raw = await heyClient.fetchHtml(`/messages/${emailId}.text`)
+} {
   const parts = walkMultipart(raw)
   const attachmentParts: Array<{ id: string; index: number; part: MimePart }> =
     []
@@ -361,6 +360,65 @@ async function fetchAndWalkRawMessage(emailId: string): Promise<{
     })
   }
   return { parts, attachmentParts }
+}
+
+/**
+ * Probe attachments from an already-fetched raw MIME string.
+ * Returns the same shape as `listAttachmentsForEmail` but without
+ * making an additional network request for the `.text` content.
+ */
+export function probeAttachmentsFromRaw(
+  raw: string,
+  _emailId: string,
+): {
+  attachments: AttachmentMeta[]
+  calendar_invites: CalendarInviteMeta[]
+} {
+  const { attachmentParts } = walkRawMime(raw)
+  const attachments: AttachmentMeta[] = []
+  const calendar_invites: CalendarInviteMeta[] = []
+
+  for (const { id, index, part } of attachmentParts) {
+    const mime = pureMime(part.headers["content-type"])
+    const filename = deriveFilename(part, index)
+    const is_calendar = mime === "text/calendar"
+
+    attachments.push({
+      id,
+      filename,
+      size: part.decoded.byteLength,
+      mime,
+      is_calendar,
+    })
+
+    if (is_calendar) {
+      const ics = parseIcs(part.text)
+      calendar_invites.push({
+        id,
+        filename,
+        summary: ics.title,
+        start: ics.start,
+        end: ics.end,
+        attendees: ics.attendees,
+      })
+    }
+  }
+
+  return { attachments, calendar_invites }
+}
+
+/**
+ * Fetch the raw RFC822 message and walk its multipart structure.
+ * Returns the parsed parts plus a list of attachment parts and their
+ * stable per-message IDs (`part-1`, `part-2`, ...).
+ */
+async function fetchAndWalkRawMessage(emailId: string): Promise<{
+  parts: MimePart[]
+  attachmentParts: Array<{ id: string; index: number; part: MimePart }>
+}> {
+  const resolvedId = await resolveMessageId(emailId)
+  const raw = await heyClient.fetchHtml(`/messages/${resolvedId}.text`)
+  return walkRawMime(raw)
 }
 
 /**
@@ -442,10 +500,23 @@ export async function downloadAttachment(args: {
   }
 }
 
-/**
- * Resolve a user-supplied save path, expanding ~ and defaulting to
- * ~/Downloads/hey-attachments/<emailId>/<filename> when omitted.
- */
+function deduplicateFilename(dir: string, filename: string): string {
+  const ext = filename.includes(".")
+    ? filename.slice(filename.lastIndexOf("."))
+    : ""
+  const base = filename.includes(".")
+    ? filename.slice(0, filename.lastIndexOf("."))
+    : filename
+  let candidate = join(dir, filename)
+  let counter = 1
+  const { existsSync } = require("node:fs")
+  while (existsSync(candidate)) {
+    candidate = join(dir, `${base}-${counter}${ext}`)
+    counter++
+  }
+  return candidate
+}
+
 function resolveSavePath(
   savePath: string | undefined,
   emailId: string,
@@ -453,7 +524,9 @@ function resolveSavePath(
 ): string {
   const home = homedir()
   if (!savePath) {
-    return join(home, "Downloads", "hey-attachments", emailId, filename)
+    const today = new Date().toISOString().slice(0, 10)
+    const dir = join(home, "Downloads", "hey-attachments", today)
+    return deduplicateFilename(dir, filename)
   }
   // Expand leading ~/ to homedir (Node's path APIs do not do this for us).
   let expanded = savePath
@@ -466,9 +539,13 @@ function resolveSavePath(
   }
 
   // If the caller pointed at a directory (trailing slash or no extension),
-  // append the inferred filename.
+  // append the inferred filename with deduplication.
   if (expanded.endsWith("/") || expanded.endsWith("\\")) {
-    expanded = join(expanded, filename)
+    const resolved = resolve(expanded)
+    if (!resolved.startsWith(`${home}/`) && resolved !== home) {
+      throw new Error("Save path must be within the user's home directory")
+    }
+    return deduplicateFilename(resolved, filename)
   }
 
   // Reject paths that resolve outside the user's home directory.

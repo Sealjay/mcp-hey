@@ -1,4 +1,6 @@
+import { parse as parseHtml } from "node-html-parser"
 import { invalidateForAction, updateReadStatus } from "../cache"
+import type { invalidateForAction as invalidateForActionFn } from "../cache/messages"
 import { toUserError } from "../errors"
 import { heyClient } from "../hey-client"
 import {
@@ -10,6 +12,46 @@ import {
 export interface OrganiseResult {
   success: boolean
   error?: string
+}
+
+type CacheAction = Parameters<typeof invalidateForActionFn>[0]
+
+/**
+ * Create a URLSearchParams with a `_method` override appended.
+ */
+function methodOverrideBody(
+  method: "put" | "patch" | "delete",
+): URLSearchParams {
+  const params = new URLSearchParams()
+  params.append("_method", method)
+  return params
+}
+
+/**
+ * Common pattern for setting a topic status via a `_method=put` POST.
+ */
+async function setTopicStatus(
+  topicId: string,
+  status: string,
+  cacheAction: CacheAction,
+): Promise<OrganiseResult> {
+  if (!topicId) {
+    return { success: false, error: "Topic ID is required" }
+  }
+
+  try {
+    const formData = methodOverrideBody("put")
+
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/topics/${topicId}/status/${status}`, formData),
+    )
+
+    return organiseResponseToResult(response, () =>
+      invalidateForAction(cacheAction, topicId),
+    )
+  } catch (err) {
+    return { success: false, error: toUserError(err) }
+  }
 }
 
 export async function setAside(id: string): Promise<OrganiseResult> {
@@ -86,27 +128,6 @@ export async function replyLater(id: string): Promise<OrganiseResult> {
   }
 }
 
-/**
- * Extract the box_id for the "Done" action from the Set Aside page.
- * The box_id is account-specific and found in the form action URL.
- */
-async function getSetAsideBoxId(): Promise<string | null> {
-  const html = await heyClient.fetchHtml("/set_aside")
-  const { parse: parseHtml } = await import("node-html-parser")
-  const root = parseHtml(html)
-
-  // Find the form that contains the "Done" button - it has action like /postings/moves?box_id=XXX
-  const forms = root.querySelectorAll("form[action*='/postings/moves']")
-  for (const form of forms) {
-    const action = form.getAttribute("action")
-    const match = action?.match(/box_id=(\d+)/)
-    if (match) {
-      return match[1]
-    }
-  }
-  return null
-}
-
 export async function removeFromSetAside(
   postingId: string,
 ): Promise<OrganiseResult> {
@@ -115,12 +136,12 @@ export async function removeFromSetAside(
   }
 
   try {
-    const boxId = await getSetAsideBoxId()
+    const boxId = await getBoxId("imbox")
     if (!boxId) {
       return {
         success: false,
         error:
-          "Could not determine box_id from Set Aside page. The page structure may have changed.",
+          "Could not determine box_id. The page structure may have changed.",
       }
     }
 
@@ -139,27 +160,6 @@ export async function removeFromSetAside(
   }
 }
 
-/**
- * Extract the box_id for the "Done" action from the Reply Later page.
- * The box_id is account-specific and found in the form action URL.
- */
-async function getReplyLaterBoxId(): Promise<string | null> {
-  const html = await heyClient.fetchHtml("/reply_later")
-  const { parse: parseHtml } = await import("node-html-parser")
-  const root = parseHtml(html)
-
-  // Find the form that contains the "Done" button - it has action like /postings/moves?box_id=XXX
-  const forms = root.querySelectorAll("form[action*='/postings/moves']")
-  for (const form of forms) {
-    const action = form.getAttribute("action")
-    const match = action?.match(/box_id=(\d+)/)
-    if (match) {
-      return match[1]
-    }
-  }
-  return null
-}
-
 export async function removeFromReplyLater(
   postingId: string,
 ): Promise<OrganiseResult> {
@@ -168,12 +168,12 @@ export async function removeFromReplyLater(
   }
 
   try {
-    const boxId = await getReplyLaterBoxId()
+    const boxId = await getBoxId("imbox")
     if (!boxId) {
       return {
         success: false,
         error:
-          "Could not determine box_id from Reply Later page. The page structure may have changed.",
+          "Could not determine box_id. The page structure may have changed.",
       }
     }
 
@@ -219,7 +219,6 @@ async function findClearanceIdByEmail(
   senderEmail: string,
 ): Promise<string | null> {
   const html = await heyClient.fetchHtml("/clearances")
-  const { parse: parseHtml } = await import("node-html-parser")
   const root = parseHtml(html)
 
   const forms = root.querySelectorAll("form[action*='/clearances/']")
@@ -284,8 +283,7 @@ export async function screenOutById(
   }
 
   try {
-    const formData = new URLSearchParams()
-    formData.append("_method", "patch")
+    const formData = methodOverrideBody("patch")
     formData.append("status", "denied")
 
     const response = await withCsrfRetry(() =>
@@ -293,7 +291,7 @@ export async function screenOutById(
     )
 
     return organiseResponseToResult(response, () =>
-      invalidateForAction("delete"),
+      invalidateForAction("archive"),
     )
   } catch (err) {
     return { success: false, error: toUserError(err) }
@@ -336,90 +334,20 @@ export async function markAsUnread(emailId: string): Promise<OrganiseResult> {
   }
 }
 
-export async function trashEmail(topicId: string): Promise<OrganiseResult> {
-  if (!topicId) {
-    return { success: false, error: "Topic ID is required" }
-  }
-
-  try {
-    const formData = new URLSearchParams()
-    formData.append("_method", "put")
-
-    const response = await withCsrfRetry(() =>
-      heyClient.post(`/topics/${topicId}/status/trashed`, formData),
-    )
-
-    return organiseResponseToResult(response, () =>
-      invalidateForAction("trash", topicId),
-    )
-  } catch (err) {
-    return { success: false, error: toUserError(err) }
-  }
+export function trashEmail(topicId: string): Promise<OrganiseResult> {
+  return setTopicStatus(topicId, "trashed", "trash")
 }
 
-export async function restoreFromTrash(
-  topicId: string,
-): Promise<OrganiseResult> {
-  if (!topicId) {
-    return { success: false, error: "Topic ID is required" }
-  }
-
-  try {
-    const formData = new URLSearchParams()
-    formData.append("_method", "put")
-
-    const response = await withCsrfRetry(() =>
-      heyClient.post(`/topics/${topicId}/status/active`, formData),
-    )
-
-    return organiseResponseToResult(response, () =>
-      invalidateForAction("restore", topicId),
-    )
-  } catch (err) {
-    return { success: false, error: toUserError(err) }
-  }
+export function restoreFromTrash(topicId: string): Promise<OrganiseResult> {
+  return setTopicStatus(topicId, "active", "restore")
 }
 
-export async function markAsSpam(topicId: string): Promise<OrganiseResult> {
-  if (!topicId) {
-    return { success: false, error: "Topic ID is required" }
-  }
-
-  try {
-    const formData = new URLSearchParams()
-    formData.append("_method", "put")
-
-    const response = await withCsrfRetry(() =>
-      heyClient.post(`/topics/${topicId}/status/spam`, formData),
-    )
-
-    return organiseResponseToResult(response, () =>
-      invalidateForAction("spam", topicId),
-    )
-  } catch (err) {
-    return { success: false, error: toUserError(err) }
-  }
+export function markAsSpam(topicId: string): Promise<OrganiseResult> {
+  return setTopicStatus(topicId, "spam", "spam")
 }
 
-export async function markAsNotSpam(topicId: string): Promise<OrganiseResult> {
-  if (!topicId) {
-    return { success: false, error: "Topic ID is required" }
-  }
-
-  try {
-    const formData = new URLSearchParams()
-    formData.append("_method", "put")
-
-    const response = await withCsrfRetry(() =>
-      heyClient.post(`/topics/${topicId}/status/ham`, formData),
-    )
-
-    return organiseResponseToResult(response, () =>
-      invalidateForAction("restore", topicId),
-    )
-  } catch (err) {
-    return { success: false, error: toUserError(err) }
-  }
+export function markAsNotSpam(topicId: string): Promise<OrganiseResult> {
+  return setTopicStatus(topicId, "ham", "restore")
 }
 
 export async function markAsUnseen(topicId: string): Promise<OrganiseResult> {
@@ -496,10 +424,8 @@ export async function bubbleUp(
       }
     }
 
-    const endpoint =
-      slot === "now"
-        ? `/postings/bubble_up?posting_ids[]=${postingId}&slot=${slot}`
-        : `/topics/${postingId}/bubble_up?slot=${slot}`
+    // The "now" case already returned above on success, so this is the fallback
+    const endpoint = `/topics/${postingId}/bubble_up?slot=${slot}`
 
     let formData: URLSearchParams | undefined
     if (slot === "custom" && date) {
@@ -525,8 +451,7 @@ export async function popBubble(postingId: string): Promise<OrganiseResult> {
   }
 
   try {
-    const formData = new URLSearchParams()
-    formData.append("_method", "delete")
+    const formData = methodOverrideBody("delete")
 
     const response = await withCsrfRetry(() =>
       heyClient.post(`/topics/${postingId}/bubble_up`, formData),
@@ -647,8 +572,7 @@ export async function screenInById(
   }
 
   try {
-    const formData = new URLSearchParams()
-    formData.append("_method", "patch")
+    const formData = methodOverrideBody("patch")
     formData.append("status", "approved")
 
     const response = await withCsrfRetry(() =>
@@ -669,7 +593,6 @@ async function getBoxId(targetKey: string): Promise<string | null> {
   if (boxIdCache[targetKey]) return boxIdCache[targetKey]
 
   const html = await heyClient.fetchHtml("/imbox")
-  const { parse: parseHtml } = await import("node-html-parser")
   const root = parseHtml(html)
 
   const forms = root.querySelectorAll("form[action*='/postings/moves']")
@@ -696,7 +619,7 @@ const destinationBoxKey: Record<MoveDestination, string> = {
   paper_trail: "trailbox",
 }
 
-const destinationCacheAction: Record<MoveDestination, string> = {
+const destinationCacheAction: Record<MoveDestination, CacheAction> = {
   imbox: "restore",
   feed: "feed",
   paper_trail: "paper_trail",
@@ -825,7 +748,6 @@ async function findFilingId(
   if (!label) return null
 
   const html = await heyClient.fetchHtml(`/topics/${topicId}/filings`)
-  const { parse: parseHtml } = await import("node-html-parser")
   const root = parseHtml(html)
 
   const forms = root.querySelectorAll("form[action*='/filings/']")
@@ -862,8 +784,7 @@ export async function removeLabel(
   try {
     const filingId = await findFilingId(topicId, labelId)
     if (filingId) {
-      const formData = new URLSearchParams()
-      formData.append("_method", "delete")
+      const formData = methodOverrideBody("delete")
 
       const response = await withCsrfRetry(() =>
         heyClient.post(`/topics/${topicId}/filings/${filingId}`, formData),

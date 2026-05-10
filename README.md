@@ -13,11 +13,12 @@
 
 mcp-hey has two moving parts: a Bun/TypeScript MCP server that exposes Hey tools over stdio, and a small Python helper that uses the system webview to capture session cookies at login. Everything runs locally — no cloud relay, no credentials stored, just session cookies on disk.
 
-> **Heads up — unofficial API.** Hey.com does not publish a public API; mcp-hey reverse-engineers its web endpoints and pairs them with browser-identical HTTP requests. Things can break without notice. The current documented surface lives in [`docs/API.md`](docs/API.md).
+> **Warning — unofficial API.** Hey.com does not publish a public API; mcp-hey reverse-engineers its web endpoints and pairs them with browser-identical HTTP requests. Things can break without notice. The current documented surface lives in [`docs/API.md`](docs/API.md).
 
 ## Features
 
-- Read emails from Imbox, Feed, Paper Trail, Set Aside, and Reply Later
+- Read emails from Imbox, Feed, Paper Trail, Set Aside, Reply Later, Drafts, Trash, and Spam
+- Download attachments and parse calendar invites from emails
 - Send and reply to email threads
 - Search emails across boxes
 - Organise mail (set aside, reply later, screen in/out, bubble up)
@@ -48,7 +49,7 @@ mcp-hey has two moving parts: a Bun/TypeScript MCP server that exposes Hey tools
 
    ```bash
    bun install
-   pip install -r auth/requirements.txt
+   uv pip install -r auth/requirements.txt
    ```
 
 3. **First run — authenticate**
@@ -57,11 +58,14 @@ mcp-hey has two moving parts: a Bun/TypeScript MCP server that exposes Hey tools
    bun run dev
    ```
 
-   The Python auth helper opens a system webview pointed at Hey.com. Log in as normal; the helper captures session cookies to `data/hey-cookies.json` (permissions locked to `600`) and exits. The Bun process then keeps running as the MCP server waiting on stdio — press `Ctrl+C` once auth has completed; your configured MCP client will launch its own instance from here on. Subsequent runs reuse the stored session until it expires.
+   1. A system webview opens with Hey.com's login page. Log in normally.
+   2. The helper captures session cookies to `data/hey-cookies.json` (permissions `600`) and exits.
+   3. Press Ctrl+C — your MCP client will launch its own server instance from here on.
+   4. Subsequent runs reuse the stored session until it expires.
 
 ## MCP client configuration
 
-All three clients use the same `command`/`args` shape. On macOS, you'll almost certainly need the absolute path to `bun` — see [macOS: `bun` PATH](#macos-bun-path) below.
+All clients below use the same `command`/`args` shape. On macOS, you'll almost certainly need the absolute path to `bun` — see [macOS: `bun` PATH](#macos-bun-path) below.
 
 ### Claude Code
 
@@ -173,7 +177,7 @@ Example:
 
 ### Data flow
 
-1. MCP client (Claude Desktop / Cursor) launches `bun run src/index.ts` over stdio.
+1. MCP client (Claude Code, Claude Desktop, Cursor, etc.) launches `bun run src/index.ts` over stdio.
 2. On startup the server validates `data/hey-cookies.json`. If missing or expired it spawns `auth/hey-auth.py`, which opens Hey in a system webview and writes fresh cookies.
 3. Tool calls hit Hey.com directly with browser-realistic headers; responses are parsed (HTML via `node-html-parser`) and cached in SQLite.
 4. Write operations fetch a fresh CSRF token before submitting.
@@ -193,6 +197,7 @@ mcp-hey/
       send.ts          # Send, reply, forward
       organise.ts      # Triage, labels, bubble up, etc.
       http-helpers.ts  # Shared CSRF retry and endpoint fallback
+      attachments.ts   # Download attachments, parse calendar invites
     __tests__/         # Test suites
   auth/
     hey-auth.py        # Python auth helper (pywebview)
@@ -201,21 +206,22 @@ mcp-hey/
     hey-cookies.json   # Session storage (gitignored, chmod 600)
   docs/
     API.md             # Hey.com API surface documentation
-    TOOLS.md           # MCP tool reference (41 tools)
+    TOOLS.md           # MCP tool reference (33 tools)
+    hey-features-doc.md  # Hey.com feature mapping
 ```
 
 ## Available tools
 
-44 tools grouped by function. See [`docs/TOOLS.md`](docs/TOOLS.md) for parameters, return shapes, and error behaviour.
+33 tools grouped by function. See [`docs/TOOLS.md`](docs/TOOLS.md) for parameters, return shapes, and error behaviour.
 
 | Category | Tools |
 |----------|-------|
-| Read | `hey_list_imbox`, `hey_imbox_summary`, `hey_list_feed`, `hey_list_paper_trail`, `hey_list_set_aside`, `hey_list_reply_later`, `hey_list_screener`, `hey_list_trash`, `hey_list_spam`, `hey_list_drafts`, `hey_read_email` |
-| Labels & Collections | `hey_list_labels`, `hey_list_label_emails`, `hey_add_label`, `hey_remove_label`, `hey_list_collections`, `hey_list_collection_emails`, `hey_add_to_collection`, `hey_remove_from_collection` |
+| Read | `hey_list_emails` (imbox, feed, paper_trail, trash, spam, drafts), `hey_imbox_summary`, `hey_list_set_aside`, `hey_list_reply_later`, `hey_list_screener`, `hey_read_email`, `hey_download_attachment`, `hey_get_calendar_invite` |
+| Labels & Collections | `hey_list_labels`, `hey_list_label_emails`, `hey_label`, `hey_list_collections`, `hey_list_collection_emails`, `hey_collection` |
 | Send | `hey_send_email`, `hey_reply`, `hey_forward` |
-| Triage | `hey_set_aside`, `hey_unset_aside`, `hey_reply_later`, `hey_remove_reply_later`, `hey_move_to`, `hey_mark_unseen`, `hey_trash`, `hey_restore`, `hey_spam`, `hey_not_spam`, `hey_ignore_thread`, `hey_unignore_thread` |
+| Triage | `hey_set_aside`, `hey_unset_aside`, `hey_reply_later`, `hey_remove_reply_later`, `hey_move_to`, `hey_set_status`, `hey_mark_unseen`, `hey_read_status`, `hey_thread_mute` |
 | Bubble up | `hey_bubble_up`, `hey_bubble_up_if_no_reply`, `hey_pop_bubble` |
-| Screener | `hey_screen_in`, `hey_screen_in_by_id`, `hey_screen_out` |
+| Screener | `hey_screen`, `hey_screen_by_id` |
 | Search | `hey_search` |
 | Cache | `hey_cache_status` |
 
@@ -237,21 +243,22 @@ See [`SECURITY.md`](SECURITY.md) for how to report vulnerabilities.
 - **Attachment uploads** are not yet supported.
 - **Single account** per MCP server instance.
 - **Account risk**: aggressive or abnormal access patterns could in theory trigger Hey's anti-abuse systems. The server respects `x-ratelimit` headers and backs off exponentially, but there are no guarantees.
+- **English UI only**: the server parses Hey.com's HTML responses and matches English-language strings (e.g. "You ignored this thread", label names, button text). It will not work correctly if Hey.com is set to a non-English locale.
 
 ## Troubleshooting
 
-- **Auth webview does not open** — confirm Python 3.10+ is on `PATH` and `pip install -r auth/requirements.txt` succeeded. On Linux ensure a webview backend is available (`python -c "import webview"` should not error).
+- **Auth webview does not open** — confirm Python 3.10+ is on `PATH` and `uv pip install -r auth/requirements.txt` succeeded. On Linux ensure a webview backend is available (`python -c "import webview"` should not error).
 - **`401`/`403` responses after weeks of use** — your Hey session has expired. Delete `data/hey-cookies.json` and run `bun run dev` again to re-auth.
 - **Rate limits (`429`)** — the client respects `x-ratelimit` headers and backs off. If you see sustained 429s, reduce concurrent tool use or wait a few minutes.
 - **MCP client can't launch the server** — `args` must be an absolute path, not relative. If `bun` itself fails with `spawn bun ENOENT`, see [macOS: `bun` PATH](#macos-bun-path).
-- **Cookie name changed** — Hey has renamed session cookies before (e.g. `_hey_session` → `session_token`, see `CLAUDE.md` for the log). If auth silently fails after a Hey update, capture fresh cookies and compare.
+- **Cookie name changed** — Hey has renamed session cookies before (e.g. `_hey_session` → `session_token`, see [`docs/API.md`](docs/API.md) changelog). If auth silently fails after a Hey update, capture fresh cookies and compare.
 
 ## Contributing
 
 Contributions welcome via pull request. Please:
 
 - Use conventional commits (`feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `cicd`, `revert`, `WIP`).
-- Run `bun run format` and `bun run lint` before pushing.
+- Run `bun run format` and `bun run lint` before pushing (powered by [Biome](https://biomejs.dev/)).
 - Ensure `bun test` passes.
 - Update [`docs/API.md`](docs/API.md) if you discover or change any Hey.com API behaviour.
 

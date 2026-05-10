@@ -390,18 +390,20 @@ export class HeyClient {
     this.csrfTokenExpiry = 0
   }
 
-  async post(
+  /**
+   * Shared POST logic. Each public POST variant supplies its own header builder.
+   */
+  private async _post(
     path: string,
-    body?: URLSearchParams | FormData,
+    body: URLSearchParams | FormData | undefined,
+    headersFn: (session: Session, token: string) => Record<string, string>,
     csrfToken?: string,
   ): Promise<Response> {
     const session = await this.ensureSession()
     const token = csrfToken || (await this.getCsrfToken())
     const url = `${BASE_URL}${path}`
 
-    const headers: Record<string, string> = {
-      ...getAjaxHeaders(session, token),
-    }
+    const headers = headersFn(session, token)
 
     if (body) {
       headers["Content-Type"] = "application/x-www-form-urlencoded"
@@ -415,6 +417,19 @@ export class HeyClient {
     })
 
     return this.handleResponse(response)
+  }
+
+  async post(
+    path: string,
+    body?: URLSearchParams | FormData,
+    csrfToken?: string,
+  ): Promise<Response> {
+    return this._post(
+      path,
+      body,
+      (session, token) => ({ ...getAjaxHeaders(session, token) }),
+      csrfToken,
+    )
   }
 
   async postForm(
@@ -422,29 +437,17 @@ export class HeyClient {
     body?: URLSearchParams | FormData,
     csrfToken?: string,
   ): Promise<Response> {
-    const session = await this.ensureSession()
-    const token = csrfToken || (await this.getCsrfToken())
-    const url = `${BASE_URL}${path}`
-
-    const headers: Record<string, string> = {
-      ...getBrowserHeaders(session),
-      "X-CSRF-Token": token,
-      Origin: BASE_URL,
-      Referer: `${BASE_URL}/imbox`,
-    }
-
-    if (body) {
-      headers["Content-Type"] = "application/x-www-form-urlencoded"
-    }
-
-    const response = await fetchWithRetry(url, {
-      method: "POST",
-      headers,
-      body: body?.toString(),
-      redirect: "manual",
-    })
-
-    return this.handleResponse(response)
+    return this._post(
+      path,
+      body,
+      (session, token) => ({
+        ...getBrowserHeaders(session),
+        "X-CSRF-Token": token,
+        Origin: BASE_URL,
+        Referer: `${BASE_URL}/imbox`,
+      }),
+      csrfToken,
+    )
   }
 
   async postTurbo(
@@ -452,30 +455,18 @@ export class HeyClient {
     body?: URLSearchParams | FormData,
     csrfToken?: string,
   ): Promise<Response> {
-    const session = await this.ensureSession()
-    const token = csrfToken || (await this.getCsrfToken())
-    const url = `${BASE_URL}${path}`
-
-    const headers: Record<string, string> = {
-      ...getBrowserHeaders(session),
-      Accept: "text/vnd.turbo-stream.html, text/html, application/xhtml+xml",
-      "X-CSRF-Token": token,
-      Origin: BASE_URL,
-      Referer: `${BASE_URL}/imbox`,
-    }
-
-    if (body) {
-      headers["Content-Type"] = "application/x-www-form-urlencoded"
-    }
-
-    const response = await fetchWithRetry(url, {
-      method: "POST",
-      headers,
-      body: body?.toString(),
-      redirect: "manual",
-    })
-
-    return this.handleResponse(response)
+    return this._post(
+      path,
+      body,
+      (session, token) => ({
+        ...getBrowserHeaders(session),
+        Accept: "text/vnd.turbo-stream.html, text/html, application/xhtml+xml",
+        "X-CSRF-Token": token,
+        Origin: BASE_URL,
+        Referer: `${BASE_URL}/imbox`,
+      }),
+      csrfToken,
+    )
   }
 
   async delete(path: string, csrfToken?: string): Promise<Response> {

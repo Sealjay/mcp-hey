@@ -2,16 +2,16 @@
 
 This document provides detailed documentation for all MCP tools provided by mcp-hey.
 
-**Total Tools: 44**
+**Total Tools: 33**
 
 ---
 
 ## Table of Contents
 
-- [Reading Tools](#reading-tools) (17 tools)
+- [Reading Tools](#reading-tools) (12 tools)
 - [Search Tool](#search-tool) (1 tool)
 - [Sending Tools](#sending-tools) (3 tools)
-- [Organisation Tools](#organisation-tools) (21 tools)
+- [Organisation Tools](#organisation-tools) (16 tools)
 - [Cache Management](#cache-management) (1 tool)
 - [Error Handling](#error-handling)
 
@@ -19,16 +19,27 @@ This document provides detailed documentation for all MCP tools provided by mcp-
 
 ## Reading Tools
 
-### hey_list_imbox
+### hey_list_emails
 
-List emails in the Hey.com Imbox (important emails that need attention).
+List emails in a Hey.com folder/view. Returns cached results unless force_refresh=true.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
+| folder | string | **Yes** | - | Folder/view: `imbox`, `feed`, `paper_trail`, `trash`, `spam`, or `drafts` |
 | limit | number | No | 25 | Maximum number of emails to return (1-100) |
 | page | number | No | 1 | Page number for pagination |
 | force_refresh | boolean | No | false | Bypass cache and fetch fresh data |
+
+**Folder values:**
+| Value | Description |
+|-------|-------------|
+| `imbox` | Important emails that need attention |
+| `feed` | Newsletters, notifications, updates |
+| `paper_trail` | Receipts, confirmations, transactional emails |
+| `trash` | Trashed emails |
+| `spam` | Spam-flagged emails |
+| `drafts` | Draft emails |
 
 **Returns:**
 ```json
@@ -86,36 +97,6 @@ Get a complete Imbox summary including screener count, bubbled up emails, and ne
 
 ---
 
-### hey_list_feed
-
-List emails in The Feed (newsletters, notifications, updates).
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| limit | number | No | 25 | Maximum number of emails to return (1-100) |
-| page | number | No | 1 | Page number for pagination |
-| force_refresh | boolean | No | false | Bypass cache and fetch fresh data |
-
-**Returns:** Same structure as `hey_list_imbox`
-
----
-
-### hey_list_paper_trail
-
-List emails in Paper Trail (receipts, confirmations, transactional emails).
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| limit | number | No | 25 | Maximum number of emails to return (1-100) |
-| page | number | No | 1 | Page number for pagination |
-| force_refresh | boolean | No | false | Bypass cache and fetch fresh data |
-
-**Returns:** Same structure as `hey_list_imbox`
-
----
-
 ### hey_list_set_aside
 
 List emails in the Set Aside stack (emails saved for later).
@@ -168,51 +149,6 @@ List emails waiting in the Screener (new senders awaiting approval).
   "_cache": {...}
 }
 ```
-
----
-
-### hey_list_trash
-
-List emails in the Trash.
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| limit | number | No | 25 | Maximum number of emails to return (1-100) |
-| page | number | No | 1 | Page number for pagination |
-| force_refresh | boolean | No | false | Bypass cache and fetch fresh data |
-
-**Returns:** Same structure as `hey_list_imbox`
-
----
-
-### hey_list_spam
-
-List emails in the Spam folder.
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| limit | number | No | 25 | Maximum number of emails to return (1-100) |
-| page | number | No | 1 | Page number for pagination |
-| force_refresh | boolean | No | false | Bypass cache and fetch fresh data |
-
-**Returns:** Same structure as `hey_list_imbox`
-
----
-
-### hey_list_drafts
-
-List draft emails.
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| limit | number | No | 25 | Maximum number of drafts to return (1-100) |
-| page | number | No | 1 | Page number for pagination |
-| force_refresh | boolean | No | false | Bypass cache and fetch fresh data |
-
-**Returns:** Same structure as `hey_list_imbox`
 
 ---
 
@@ -349,12 +285,12 @@ the base64 MIME part and writes raw bytes to the supplied path.
 |------|------|----------|---------|-------------|
 | email_id | string | **Yes** | - | The email ID containing the attachment |
 | attachment_id | string | **Yes** | - | The `id` from `hey_read_email`'s `attachments` array (e.g. `part-1`) |
-| save_path | string | No | `~/Downloads/hey-attachments/<email_id>/<filename>` | Absolute path or directory. Trailing `/` is treated as a directory. |
+| save_path | string | No | `~/Downloads/hey-attachments/<date>/<filename>` | Path or directory within ~/. Trailing `/` = directory. Duplicate filenames auto-numbered (invite-1.ics). |
 
 **Returns:**
 ```json
 {
-  "local_path": "/Users/me/Downloads/hey-attachments/12345/agenda.pdf",
+  "local_path": "/Users/me/Downloads/hey-attachments/2026-05-10/agenda.pdf",
   "filename": "agenda.pdf",
   "size": 12480,
   "mime": "application/pdf"
@@ -709,14 +645,15 @@ Mark an email thread as unseen/unread.
 
 ---
 
-### hey_trash
+### hey_read_status
 
-Move an email thread to Trash.
+Set the read/unread status of an email entry. Reversible by calling again with the opposite status. Operates on individual entries, not whole threads.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| id | string | **Yes** | - | The topic/thread ID to trash |
+| id | string | **Yes** | - | The entry ID to update (use `entryId` from list operations) |
+| status | string | **Yes** | - | Target status: `read` or `unread` |
 
 **Returns:**
 ```json
@@ -727,14 +664,23 @@ Move an email thread to Trash.
 
 ---
 
-### hey_restore
+### hey_set_status
 
-Restore an email thread from Trash.
+Change an email thread's status (trash, restore, spam, unspam).
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| id | string | **Yes** | - | The topic/thread ID to restore |
+| id | string | **Yes** | - | The topic/thread ID (use `topicId` from list operations) |
+| action | string | **Yes** | - | Status action (see table below) |
+
+**Action values:**
+| Value | Description |
+|-------|-------------|
+| `trash` | Move to Trash (reversible via `restore`) |
+| `restore` | Recover from Trash |
+| `spam` | Mark as spam and block sender (reversible via `unspam`) |
+| `unspam` | Restore from spam folder |
 
 **Returns:**
 ```json
@@ -769,18 +715,19 @@ Move an email thread between Hey.com views: Imbox, Feed, or Paper Trail. Reversi
 }
 ```
 
-> **Note**: This tool does not cover trash, spam, or screener — use `hey_trash`, `hey_spam`, or `hey_screen_out` for those. Set Aside and Reply Later have their own dedicated tools (`hey_set_aside`, `hey_reply_later`) because they are temporary triage actions with different reversal semantics.
+> **Note**: This tool does not cover trash, spam, or screener -- use `hey_set_status` or `hey_screen` for those. Set Aside and Reply Later have their own dedicated tools (`hey_set_aside`, `hey_reply_later`) because they are temporary triage actions with different reversal semantics.
 
 ---
 
-### hey_spam
+### hey_thread_mute
 
-Mark an email thread as Spam.
+Mute or unmute a thread (called "Ignore" in Hey.com's UI). Muting stops notifications but keeps the thread in its current view.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| id | string | **Yes** | - | The topic/thread ID to mark as spam |
+| posting_id | string | **Yes** | - | The posting ID of the thread (use `postingId` from list operations) |
+| action | string | **Yes** | - | `mute` to stop notifications, `unmute` to resume them |
 
 **Returns:**
 ```json
@@ -791,14 +738,58 @@ Mark an email thread as Spam.
 
 ---
 
-### hey_not_spam
+### hey_screen
 
-Mark an email thread as Not Spam (restore from spam folder).
+Approve or reject a first-time sender from the Screener by email address.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| id | string | **Yes** | - | The topic/thread ID to mark as not spam |
+| sender_email | string | **Yes** | - | The sender's email address |
+| action | string | **Yes** | - | `approve` to allow emails through, `reject` to permanently block (DESTRUCTIVE, irreversible) |
+
+**Returns:**
+```json
+{
+  "success": true
+}
+```
+
+> **Warning**: `reject` permanently blocks the sender. This cannot be undone via MCP.
+
+---
+
+### hey_screen_by_id
+
+Approve or reject a first-time sender from the Screener by clearance ID.
+
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| clearance_id | string | **Yes** | - | The clearance ID from `hey_list_screener` |
+| action | string | **Yes** | - | `approve` to allow emails through, `reject` to permanently block (DESTRUCTIVE, irreversible) |
+
+**Returns:**
+```json
+{
+  "success": true
+}
+```
+
+> **Warning**: `reject` permanently blocks the sender. This cannot be undone via MCP.
+
+---
+
+### hey_label
+
+Add or remove a label on an email thread.
+
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| topic_id | string | **Yes** | - | The topic/thread ID to label or unlabel |
+| label_id | string | **Yes** | - | The label ID (use `hey_list_labels` to see available labels) |
+| action | string | **Yes** | - | `add` or `remove` |
 
 **Returns:**
 ```json
@@ -809,162 +800,16 @@ Mark an email thread as Not Spam (restore from spam folder).
 
 ---
 
-### hey_ignore_thread
+### hey_collection
 
-Ignore/mute a thread (stop receiving notifications).
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| posting_id | string | **Yes** | - | The posting ID to ignore |
-
-**Returns:**
-```json
-{
-  "success": true
-}
-```
-
----
-
-### hey_unignore_thread
-
-Un-ignore/unmute a thread (resume receiving notifications).
+Add or remove an email thread from a collection.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| posting_id | string | **Yes** | - | The posting ID to un-ignore |
-
-**Returns:**
-```json
-{
-  "success": true
-}
-```
-
----
-
-### hey_screen_in
-
-Approve a sender from the Screener (allow future emails). Looks up the clearance ID by sender email.
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| sender_email | string | **Yes** | - | The sender email address to approve |
-
-**Returns:**
-```json
-{
-  "success": true
-}
-```
-
----
-
-### hey_screen_in_by_id
-
-Approve a sender from the Screener by clearance ID (alternative to sender email).
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| clearance_id | string | **Yes** | - | The clearance ID from the screener list |
-
-**Returns:**
-```json
-{
-  "success": true
-}
-```
-
----
-
-### hey_screen_out
-
-Reject a sender from the Screener (block future emails).
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| sender_email | string | **Yes** | - | The sender email address to reject |
-
-**Returns:**
-```json
-{
-  "success": true
-}
-```
-
----
-
-### hey_add_label
-
-Add a label to an email thread.
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| topic_id | string | **Yes** | - | The topic/thread ID to label |
-| label_id | string | **Yes** | - | The label ID to apply (use `hey_list_labels` to see available labels) |
-
-**Returns:**
-```json
-{
-  "success": true
-}
-```
-
----
-
-### hey_remove_label
-
-Remove a label from an email thread.
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| topic_id | string | **Yes** | - | The topic/thread ID to unlabel |
-| label_id | string | **Yes** | - | The label ID to remove |
-
-**Returns:**
-```json
-{
-  "success": true
-}
-```
-
----
-
-### hey_add_to_collection
-
-Add an email thread to a collection.
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| topic_id | string | **Yes** | - | The topic/thread ID to add to the collection |
+| topic_id | string | **Yes** | - | The topic/thread ID |
 | collection_id | string | **Yes** | - | The collection ID (use `hey_list_collections` to see available collections) |
-
-**Returns:**
-```json
-{
-  "success": true
-}
-```
-
----
-
-### hey_remove_from_collection
-
-Remove an email thread from a collection.
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| topic_id | string | **Yes** | - | The topic/thread ID to remove from the collection |
-| collection_id | string | **Yes** | - | The collection ID |
+| action | string | **Yes** | - | `add` or `remove` |
 
 **Returns:**
 ```json
@@ -1045,10 +890,10 @@ Hey.com uses different ID types for different operations. Always use the correct
 
 | ID Type | Field Name | Used By |
 |---------|------------|---------|
-| **Posting ID** | `postingId` | `hey_bubble_up`, `hey_bubble_up_if_no_reply`, `hey_pop_bubble`, `hey_ignore_thread`, `hey_unignore_thread`, `hey_unset_aside`, `hey_remove_reply_later`, `hey_read_email` (Paper Trail bundles) |
-| **Topic ID** | `topicId` | `hey_reply`, `hey_trash`, `hey_restore`, `hey_spam`, `hey_not_spam`, `hey_add_label`, `hey_remove_label`, `hey_add_to_collection`, `hey_remove_from_collection`, `hey_mark_unseen`, `hey_move_to`, `hey_read_email` (threads) |
+| **Posting ID** | `postingId` | `hey_bubble_up`, `hey_bubble_up_if_no_reply`, `hey_pop_bubble`, `hey_thread_mute`, `hey_unset_aside`, `hey_remove_reply_later`, `hey_read_email` (Paper Trail bundles) |
+| **Topic ID** | `topicId` | `hey_reply`, `hey_set_status`, `hey_label`, `hey_collection`, `hey_mark_unseen`, `hey_move_to`, `hey_read_email` (threads) |
 | **Topic or Entry ID** | `topicId` or `entryId` | `hey_set_aside`, `hey_reply_later` (accepts either, tries topic-based move first then entry-based fallback) |
-| **Entry ID** | `entryId` | `hey_forward` |
-| **Clearance ID** | `clearanceId` | `hey_screen_in_by_id` |
+| **Entry ID** | `entryId` | `hey_forward`, `hey_read_status` |
+| **Clearance ID** | `clearanceId` | `hey_screen_by_id` |
 
 > **Tip**: When listing emails, the response includes all available ID types. Use the appropriate ID based on the operation you want to perform.
