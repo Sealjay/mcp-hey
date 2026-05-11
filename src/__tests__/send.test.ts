@@ -293,6 +293,48 @@ describe("Thread reply recipient resolution", () => {
       expect(entries).toHaveLength(1)
       expect(entries[0].entryId).toBe("555")
     })
+
+    test("extracts sender email from entry__sender-email span (current Hey markup)", () => {
+      // Hey's current DOM (May 2026+) leaves avatar alt empty and exposes
+      // the sender email in a dedicated span instead. Without this path,
+      // every entry on a modern thread looks anonymous and the reply
+      // auto-recipient resolver fails with "Could not determine reply
+      // recipient from thread participants".
+      const html = `
+        <html><body>
+          <article class="entry" data-entry-id="111">
+            <img class="avatar" alt="" title="Alice Smith <alice@example.com>">
+            <span class="entry__sender-email txt--small">&lt;alice@example.com&gt;</span>
+            <time datetime="2026-05-11T09:00:00Z">Today</time>
+          </article>
+          <article class="entry" data-entry-id="222">
+            <img class="avatar" alt="">
+            <span class="entry__sender-email">&lt;bob@example.com&gt;</span>
+            <time datetime="2026-05-11T10:00:00Z">Today</time>
+          </article>
+        </body></html>
+      `
+      const root = parseHtml(html)
+      const entries = extractThreadEntries(root)
+      expect(entries).toHaveLength(2)
+      expect(entries[0].senderEmail).toBe("alice@example.com")
+      expect(entries[1].senderEmail).toBe("bob@example.com")
+    })
+
+    test("falls back to img[title] when sender-email span is absent", () => {
+      const html = `
+        <html><body>
+          <article class="entry" data-entry-id="333">
+            <img class="avatar" alt="" title="Carol Lee <carol@example.org>">
+            <time datetime="2026-05-11T11:00:00Z">Today</time>
+          </article>
+        </body></html>
+      `
+      const root = parseHtml(html)
+      const entries = extractThreadEntries(root)
+      expect(entries).toHaveLength(1)
+      expect(entries[0].senderEmail).toBe("carol@example.org")
+    })
   })
 
   describe("findLatestNonSelfSender", () => {

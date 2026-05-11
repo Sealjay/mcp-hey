@@ -640,14 +640,14 @@ posting_ids=1180230233
 
 ---
 
-#### POST /postings/bubble_up
+#### POST /topics/{topicId}/bubble_up
 
-Schedule emails to bubble back up to Imbox.
+Schedule a single topic to bubble back up to Imbox. This is the canonical endpoint — verified against the live Hey UI (every slot button on the bubble-up menu posts here).
 
 | Parameter | Type | Location | Description |
 |-----------|------|----------|-------------|
-| `posting_ids[]` | string | query | Posting ID(s) to bubble up (repeat for multiple) |
-| `slot` | string | query | When to bubble up (see values below) |
+| `topicId` | string | path | **Topic ID** (NOT posting ID — they are different numbers and posting IDs return 404) |
+| `slot` | string | query | When to bubble up (see values below). Omit for `now` — use `/topics/{topicId}/bubble_up_now` instead. |
 | `waiting_on` | boolean | query | If `true`, makes bubble-up conditional on no reply (use with `slot=custom`) |
 
 **POST Body (for `custom` slot):**
@@ -658,31 +658,26 @@ Schedule emails to bubble back up to Imbox.
 
 **Slot Values:**
 
-| Value | Description |
-|-------|-------------|
-| `now` | Immediately |
-| `today` | Later today (typically 18:00) |
-| `tomorrow` | Tomorrow morning (typically 08:00) |
-| `weekend` | This weekend (typically Saturday 08:00) |
-| `next_week` | Next week (typically Monday 08:00) |
-| `surprise_me` | Random time chosen by Hey |
-| `custom` | Specific date (requires `date` in POST body) |
+| Value | Description | Endpoint |
+|-------|-------------|----------|
+| `now` | Immediately | `POST /topics/{topicId}/bubble_up_now` (no `slot` query param) |
+| `today` | Later today (typically 18:00) | `POST /topics/{topicId}/bubble_up?slot=today` |
+| `tomorrow` | Tomorrow morning (typically 08:00) | `POST /topics/{topicId}/bubble_up?slot=tomorrow` |
+| `weekend` | This weekend (typically Saturday 08:00) | `POST /topics/{topicId}/bubble_up?slot=weekend` |
+| `next_week` | Next week (typically Monday 08:00) | `POST /topics/{topicId}/bubble_up?slot=next_week` |
+| `surprise_me` | Random time chosen by Hey | `POST /topics/{topicId}/bubble_up?slot=surprise_me` |
+| `custom` | Specific date (requires `date` in POST body) | `POST /topics/{topicId}/bubble_up?slot=custom` |
 
 **Examples:**
 
 Standard bubble-up:
 ```
-POST /postings/bubble_up?posting_ids[]=12345&slot=tomorrow
-```
-
-Surprise me (random time):
-```
-POST /postings/bubble_up?posting_ids[]=12345&slot=surprise_me
+POST /topics/1998225494/bubble_up?slot=tomorrow
 ```
 
 Custom date:
 ```
-POST /postings/bubble_up?posting_ids[]=12345&slot=custom
+POST /topics/1998225494/bubble_up?slot=custom
 Content-Type: application/x-www-form-urlencoded
 
 date=2026-01-28
@@ -690,29 +685,20 @@ date=2026-01-28
 
 Conditional bubble-up (if no reply by date):
 ```
-POST /postings/bubble_up?posting_ids[]=12345&slot=custom&waiting_on=true
+POST /topics/1998225494/bubble_up?slot=custom&waiting_on=true
 Content-Type: application/x-www-form-urlencoded
 
 date=2026-01-28
 ```
 
-**Response:** 200 OK or redirect
+To pop/dismiss a bubble:
+```
+DELETE /topics/1998225494/bubble_up
+```
 
-#### POST /topics/{id}/bubble_up
+**Response:** 200 OK or 302 redirect.
 
-Alternative endpoint for scheduling a single topic to bubble up.
-
-| Parameter | Type | Location | Description |
-|-----------|------|----------|-------------|
-| `id` | string | path | Topic ID |
-| `slot` | string | query | When to bubble up (same values as above) |
-| `waiting_on` | boolean | query | If `true`, makes bubble-up conditional on no reply |
-
-**Example:** `POST /topics/1906880181/bubble_up?slot=tomorrow`
-
-**Response:** 200 OK or redirect
-
-> **Note**: Both `/postings/bubble_up` and `/topics/{id}/bubble_up` endpoints work. The postings endpoint supports multiple IDs; the topics endpoint is simpler for single items.
+> **Note**: An older `/postings/bubble_up?posting_ids[]={id}` endpoint exists for bulk operations but was removed as a fallback in the MCP server (2026-05-11): it accepts posting IDs rather than topic IDs and was masking 404 errors that signal callers passed the wrong ID type. The MCP server now uses `/topics/{topicId}/bubble_up*` exclusively for `hey_bubble_up`, `hey_bubble_up_if_no_reply`, and `hey_pop_bubble`.
 
 ---
 
@@ -1072,3 +1058,4 @@ When a session expires, requests return a 302 redirect to `/sign_in`. The mcp-he
 | 2026-05 | Documented `POST /postings/trash` with `posting_ids` for trashing Paper Trail bundle items (the only destructive action bundles expose; spam/block is unavailable). MCP `hey_set_status(action=trash)` falls back to this when no entry can be resolved. |
 | 2026-05 | Documented "New for you" tray endpoints: `POST /postings/seen` with `posting_ids` (per-posting) and `POST /boxes/{boxId}/observation` (bulk for an entire box). Surfaced via new `hey_mark_seen` MCP tool (optional `posting_id` switches per-posting vs bulk). Distinct from per-entry read state and from the existing `POST /topics/{id}/unseen` toggle. |
 | 2026-05 | Documented `POST /contacts/{contactId}/clearance?status={approved|denied}` with `_method=put` — the contact-page surface for blocking an already-approved sender without flagging emails as spam. MCP `hey_screen(action=reject)` now falls back to this endpoint via `findContactIdByEmail` when the sender is not pending in the screener. |
+| 2026-05-11 | **BREAKING (MCP)**: Bubble-up MCP tools (`hey_bubble_up`, `hey_bubble_up_if_no_reply`, `hey_pop_bubble`) renamed their `posting_id` parameter to `topic_id`. Empirically verified against the live Hey UI: every bubble-up form on `/topics/{id}/bubble_up/menu` posts to `/topics/{topicId}/bubble_up*` — passing a posting ID yields 404. Removed the `/postings/bubble_up?posting_ids[]=` fallback (it accepted a different ID type and masked the 404 signal). |

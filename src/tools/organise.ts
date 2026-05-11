@@ -581,12 +581,12 @@ function isValidDate(dateStr: string): boolean {
 }
 
 export async function bubbleUp(
-  postingId: string,
+  topicId: string,
   slot: BubbleUpSlot,
   date?: string,
 ): Promise<OrganiseResult> {
-  if (!postingId) {
-    return { success: false, error: "ID is required" }
+  if (!topicId) {
+    return { success: false, error: "topic_id is required" }
   }
   if (!slot) {
     return { success: false, error: "Slot is required" }
@@ -607,17 +607,14 @@ export async function bubbleUp(
   try {
     if (slot === "now") {
       const response = await withCsrfRetry(() =>
-        heyClient.post(`/topics/${postingId}/bubble_up_now`),
+        heyClient.post(`/topics/${topicId}/bubble_up_now`),
       )
-      if (response.ok || response.status === 302) {
-        return organiseResponseToResult(response, () =>
-          invalidateForAction("bubble_up", postingId),
-        )
-      }
+      return organiseResponseToResult(response, () =>
+        invalidateForAction("bubble_up", topicId),
+      )
     }
 
-    // The "now" case already returned above on success, so this is the fallback
-    const endpoint = `/topics/${postingId}/bubble_up?slot=${slot}`
+    const endpoint = `/topics/${topicId}/bubble_up?slot=${slot}`
 
     let formData: URLSearchParams | undefined
     if (slot === "custom" && date) {
@@ -630,37 +627,27 @@ export async function bubbleUp(
     )
 
     return organiseResponseToResult(response, () =>
-      invalidateForAction("bubble_up", postingId),
+      invalidateForAction("bubble_up", topicId),
     )
   } catch (err) {
     return { success: false, error: toUserError(err) }
   }
 }
 
-export async function popBubble(postingId: string): Promise<OrganiseResult> {
-  if (!postingId) {
-    return { success: false, error: "Posting ID is required" }
+export async function popBubble(topicId: string): Promise<OrganiseResult> {
+  if (!topicId) {
+    return { success: false, error: "topic_id is required" }
   }
 
   try {
     const formData = methodOverrideBody("delete")
 
     const response = await withCsrfRetry(() =>
-      heyClient.post(`/topics/${postingId}/bubble_up`, formData),
-    )
-    if (response.ok || response.status === 302) {
-      return organiseResponseToResult(response, () =>
-        invalidateForAction("bubble_up", postingId),
-      )
-    }
-
-    const fallbackEndpoint = `/postings/bubble_up?posting_ids[]=${postingId}`
-    const fallbackResponse = await withCsrfRetry(() =>
-      heyClient.delete(fallbackEndpoint),
+      heyClient.post(`/topics/${topicId}/bubble_up`, formData),
     )
 
-    return organiseResponseToResult(fallbackResponse, () =>
-      invalidateForAction("bubble_up", postingId),
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("bubble_up", topicId),
     )
   } catch (err) {
     return { success: false, error: toUserError(err) }
@@ -668,14 +655,14 @@ export async function popBubble(postingId: string): Promise<OrganiseResult> {
 }
 
 /**
- * Schedule an email to bubble up ONLY if there's no reply by a specific date.
+ * Schedule an email thread to bubble up ONLY if there's no reply by a specific date.
  */
 export async function bubbleUpIfNoReply(
-  postingId: string,
+  topicId: string,
   date: string,
 ): Promise<OrganiseResult> {
-  if (!postingId) {
-    return { success: false, error: "ID is required" }
+  if (!topicId) {
+    return { success: false, error: "topic_id is required" }
   }
   if (!date) {
     return { success: false, error: "Date is required (YYYY-MM-DD format)" }
@@ -693,25 +680,13 @@ export async function bubbleUpIfNoReply(
 
     const response = await withCsrfRetry(() =>
       heyClient.post(
-        `/topics/${postingId}/bubble_up?slot=custom&waiting_on=true`,
-        formData,
-      ),
-    )
-    if (response.ok || response.status === 302) {
-      return organiseResponseToResult(response, () =>
-        invalidateForAction("bubble_up", postingId),
-      )
-    }
-
-    const fallbackResponse = await withCsrfRetry(() =>
-      heyClient.post(
-        `/postings/bubble_up?posting_ids[]=${postingId}&slot=custom&waiting_on=true`,
+        `/topics/${topicId}/bubble_up?slot=custom&waiting_on=true`,
         formData,
       ),
     )
 
-    return organiseResponseToResult(fallbackResponse, () =>
-      invalidateForAction("bubble_up", postingId),
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("bubble_up", topicId),
     )
   } catch (err) {
     return { success: false, error: toUserError(err) }

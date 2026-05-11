@@ -25,6 +25,7 @@ Our MCP tools should prefer **topic-based** endpoints for single-thread operatio
 ## Endpoint Rules
 
 - **Box moves** (Set Aside, Reply Later, Paper Trail, Feed, Imbox) use `POST /topics/{topicId}/moves?box_id={boxId}` from thread context, or `POST /postings/moves?box_id={boxId}` with `posting_ids` from list context
+- **Bubble-up family** uses `POST /topics/{topicId}/bubble_up*` exclusively (`bubble_up_now`, `bubble_up?slot=…`, `bubble_up?slot=custom&waiting_on=true`, and `DELETE /topics/{topicId}/bubble_up` to pop). Verified against the live Hey UI 2026-05-11 — every bubble-up form on `/topics/{id}/bubble_up/menu` posts to a `/topics/{topicId}/…` URL. Posting IDs return 404; do **not** add a `/postings/bubble_up` fallback (it accepts a different ID type and masks the wrong-ID signal).
 - The `box_id` is account-specific; extract it from page HTML forms using `data-bulk-actions-target` attributes (e.g. "trailboxButton", "asideboxButton")
 - **Status endpoints** (`/topics/{id}/status/trashed`, `/topics/{id}/status/active`, etc.) require `_method=put` in the POST form body — bare POST returns 404
 - **Non-status actions** (`/topics/{id}/unseen`, `/topics/{id}/filings`) do NOT need `_method` override
@@ -32,3 +33,21 @@ Our MCP tools should prefer **topic-based** endpoints for single-thread operatio
 - Always verify new endpoints against the live Hey.com UI (Chrome DevTools Network tab or Claude-in-Chrome) before implementing
 - Document any new or changed endpoint in `docs/API.md` immediately, including a changelog entry
 - Add the tool to `docs/TOOLS.md` and `docs/hey-features-doc.md` — every tool in `src/index.ts` must appear in both
+
+## Per-tool ID type (canonical)
+
+When introducing or changing a tool, match its MCP param name to the ID type its Hey endpoint actually accepts. Mis-naming is a confidence game — the model picks the wrong field from list responses and we get 404s.
+
+| Tool | Endpoint | ID required | MCP param |
+|------|----------|-------------|-----------|
+| `hey_bubble_up` | `POST /topics/{id}/bubble_up_now`, `POST /topics/{id}/bubble_up?slot=…` | **topicId** | `topic_id` |
+| `hey_bubble_up_if_no_reply` | `POST /topics/{id}/bubble_up?slot=custom&waiting_on=true` | **topicId** | `topic_id` |
+| `hey_pop_bubble` | `DELETE /topics/{id}/bubble_up` | **topicId** | `topic_id` |
+| `hey_set_aside`, `hey_reply_later`, `hey_move_to` | `POST /topics/{id}/moves?box_id=…` | topicId | `id` |
+| `hey_mark_unseen` | `POST /topics/{id}/unseen` | topicId | `topic_id` |
+| `hey_label`, `hey_collection` | `POST /topics/{id}/filings…` | topicId | `id` |
+| `hey_set_status` | `POST /entries/{id}/status/{action}` (fallback `POST /postings/trash` for Paper Trail bundles) | entryId (postingId for bundles) | `id` |
+| `hey_unset_aside`, `hey_remove_reply_later` | `POST /postings/moves?box_id={imboxBoxId}` | postingId | `posting_id` |
+| `hey_thread_mute` | `POST /postings/{id}/muting` | postingId | `posting_id` |
+| `hey_mark_seen` (per-item) | `POST /postings/seen` with `posting_ids` | postingId | `posting_id` |
+| `hey_read_status` | `POST /entries/{id}/status/{read|unread}` | entryId | `id` |

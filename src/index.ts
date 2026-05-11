@@ -907,14 +907,14 @@ const tools: Tool[] = [
       openWorldHint: true,
     },
     description:
-      "Schedule an email to bubble up (reappear) at a specific time. Returns {success, error?}. Reversible via hey_pop_bubble. The 'now' slot requires a topicId; other slots accept topicId or postingId.",
+      "Schedule an email thread to bubble up (reappear) at a specific time. Returns {success, error?}. Reversible via hey_pop_bubble. Requires the thread's topic_id (use topic_id from any list operation); posting IDs are not accepted and will 404.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        posting_id: {
+        topic_id: {
           type: "string",
           description:
-            "The topic or posting ID to schedule (use topicId for 'now' slot)",
+            "The topic ID (thread ID) to schedule. Use the `topicId` field from hey_list_* responses (NOT `postingId` — that's a different ID and will 404).",
         },
         slot: {
           type: "string",
@@ -936,7 +936,7 @@ const tools: Tool[] = [
             "Date in YYYY-MM-DD format. Required when slot is 'custom', ignored otherwise.",
         },
       },
-      required: ["posting_id", "slot"],
+      required: ["topic_id", "slot"],
     },
   },
   {
@@ -948,14 +948,14 @@ const tools: Tool[] = [
       openWorldHint: true,
     },
     description:
-      "Schedule an email to bubble up ONLY if there's no reply by a deadline date. Returns {success, error?}. The email will only reappear if the recipient hasn't replied. Reversible via hey_pop_bubble.",
+      "Schedule an email thread to bubble up ONLY if there's no reply by a deadline date. Returns {success, error?}. The thread only reappears if no reply arrives. Reversible via hey_pop_bubble. Requires the thread's topic_id (use topic_id from any list operation); posting IDs are not accepted.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        posting_id: {
+        topic_id: {
           type: "string",
           description:
-            "The topic or posting ID to schedule (use topicId preferred)",
+            "The topic ID (thread ID) to schedule. Use the `topicId` field from hey_list_* responses (NOT `postingId` — that's a different ID and will 404).",
         },
         date: {
           type: "string",
@@ -963,7 +963,7 @@ const tools: Tool[] = [
             "Deadline date in YYYY-MM-DD format. The email will bubble up only if no reply is received by this date.",
         },
       },
-      required: ["posting_id", "date"],
+      required: ["topic_id", "date"],
     },
   },
   {
@@ -975,17 +975,17 @@ const tools: Tool[] = [
       openWorldHint: true,
     },
     description:
-      "Pop (dismiss) a bubbled-up email so it sinks back into the Imbox. The email is not deleted — it just stops being pinned at the top. Returns {success, error?}.",
+      "Pop (dismiss) a bubbled-up email thread so it sinks back into the Imbox. The thread is not deleted — it just stops being pinned at the top. Returns {success, error?}. Requires the thread's topic_id (use topic_id from any list operation); posting IDs are not accepted.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        posting_id: {
+        topic_id: {
           type: "string",
           description:
-            "The topic or posting ID to pop/unbubble (use topicId preferred)",
+            "The topic ID (thread ID) to pop/unbubble. Use the `topicId` field from hey_list_* responses (NOT `postingId` — that's a different ID and will 404).",
         },
       },
-      required: ["posting_id"],
+      required: ["topic_id"],
     },
   },
   {
@@ -1789,15 +1789,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break
       }
       case "hey_bubble_up": {
-        const postingId = validateId(args?.posting_id)
+        const topicId = validateId(args?.topic_id)
         const slot = args?.slot as BubbleUpSlot
         const date = args?.date as string | undefined
-        if (!postingId) {
+        if (!topicId) {
           return {
             content: [
               {
                 type: "text",
-                text: "Error: posting_id is required and must be valid",
+                text: "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
               },
             ],
             isError: true,
@@ -1823,18 +1823,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
-        result = await bubbleUp(postingId, slot, date)
+        result = await bubbleUp(topicId, slot, date)
         break
       }
       case "hey_bubble_up_if_no_reply": {
-        const postingId = validateId(args?.posting_id)
+        const topicId = validateId(args?.topic_id)
         const date = args?.date as string | undefined
-        if (!postingId) {
+        if (!topicId) {
           return {
             content: [
               {
                 type: "text",
-                text: "Error: posting_id is required and must be valid",
+                text: "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
               },
             ],
             isError: true,
@@ -1851,23 +1851,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
-        result = await bubbleUpIfNoReply(postingId, date)
+        result = await bubbleUpIfNoReply(topicId, date)
         break
       }
       case "hey_pop_bubble": {
-        const postingId = validateId(args?.posting_id)
-        if (!postingId) {
+        const topicId = validateId(args?.topic_id)
+        if (!topicId) {
           return {
             content: [
               {
                 type: "text",
-                text: "Error: posting_id is required and must be valid",
+                text: "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
               },
             ],
             isError: true,
           }
         }
-        result = await popBubble(postingId)
+        result = await popBubble(topicId)
         break
       }
       case "hey_thread_mute": {

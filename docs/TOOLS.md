@@ -524,12 +524,14 @@ Remove an email from Reply Later (mark as "Done", moving it back to the Imbox).
 
 ### hey_bubble_up
 
-Schedule an email to bubble up (reappear) at a specific time slot.
+Schedule an email thread to bubble up (reappear) at a specific time slot.
+
+> **ID type**: requires the thread's **topicId** (use the `topicId` field from any `hey_list_*` response). Posting IDs will return 404 — the underlying endpoint is `POST /topics/{topicId}/bubble_up`.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| posting_id | string | **Yes** | - | The posting ID to schedule |
+| topic_id | string | **Yes** | - | The topic (thread) ID to schedule — use `topicId` from list operations |
 | slot | string | **Yes** | - | When to bubble up (see table below) |
 | date | string | No* | - | Date in YYYY-MM-DD format. *Required when slot is `custom`. |
 
@@ -549,7 +551,7 @@ Schedule an email to bubble up (reappear) at a specific time slot.
 Standard bubble-up:
 ```json
 {
-  "posting_id": "12345",
+  "topic_id": "1998225494",
   "slot": "tomorrow"
 }
 ```
@@ -557,7 +559,7 @@ Standard bubble-up:
 Surprise me (random time):
 ```json
 {
-  "posting_id": "12345",
+  "topic_id": "1998225494",
   "slot": "surprise_me"
 }
 ```
@@ -565,7 +567,7 @@ Surprise me (random time):
 Custom date:
 ```json
 {
-  "posting_id": "12345",
+  "topic_id": "1998225494",
   "slot": "custom",
   "date": "2026-01-28"
 }
@@ -582,18 +584,20 @@ Custom date:
 
 ### hey_bubble_up_if_no_reply
 
-Schedule an email to bubble up ONLY if there's no reply by a specific date. This is a conditional bubble-up - the email will only reappear if the recipient hasn't replied by the deadline.
+Schedule an email thread to bubble up ONLY if there's no reply by a specific date. Conditional — the thread only reappears if the recipient hasn't replied by the deadline.
+
+> **ID type**: requires the thread's **topicId** (use the `topicId` field from any `hey_list_*` response). Posting IDs will 404.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| posting_id | string | **Yes** | - | The posting ID to schedule |
+| topic_id | string | **Yes** | - | The topic (thread) ID to schedule — use `topicId` from list operations |
 | date | string | **Yes** | - | Deadline date in YYYY-MM-DD format |
 
 **Example:**
 ```json
 {
-  "posting_id": "12345",
+  "topic_id": "1998225494",
   "date": "2026-01-24"
 }
 ```
@@ -611,12 +615,14 @@ Schedule an email to bubble up ONLY if there's no reply by a specific date. This
 
 ### hey_pop_bubble
 
-Pop (dismiss) a bubbled-up email so it sinks back into the Imbox. The email is not deleted or archived — it just stops being pinned at the top.
+Pop (dismiss) a bubbled-up email thread so it sinks back into the Imbox. The thread is not deleted or archived — it just stops being pinned at the top.
+
+> **ID type**: requires the thread's **topicId** (use the `topicId` field from any `hey_list_*` response). Posting IDs will 404.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| posting_id | string | **Yes** | - | The posting ID to pop/unbubble |
+| topic_id | string | **Yes** | - | The topic (thread) ID to pop/unbubble — use `topicId` from list operations |
 
 **Returns:**
 ```json
@@ -916,9 +922,8 @@ Hey.com uses different ID types for different operations. Always use the correct
 
 | ID Type | Field Name | Used By |
 |---------|------------|---------|
-| **Posting ID** | `postingId` | `hey_bubble_up`, `hey_bubble_up_if_no_reply`, `hey_pop_bubble`, `hey_thread_mute`, `hey_unset_aside`, `hey_remove_reply_later`, `hey_read_email` (Paper Trail bundles) |
-| **Topic ID** | `topicId` | `hey_reply`, `hey_set_status`, `hey_label`, `hey_collection`, `hey_mark_unseen`, `hey_move_to`, `hey_read_email` (threads) |
-| **Topic or Entry ID** | `topicId` or `entryId` | `hey_set_aside`, `hey_reply_later` (accepts either, tries topic-based move first then entry-based fallback) |
+| **Posting ID** | `postingId` | `hey_thread_mute`, `hey_unset_aside`, `hey_remove_reply_later`, `hey_mark_seen` (per-item), `hey_read_email` (Paper Trail bundles) |
+| **Topic ID** | `topicId` | `hey_bubble_up`, `hey_bubble_up_if_no_reply`, `hey_pop_bubble`, `hey_reply`, `hey_set_status`, `hey_label`, `hey_collection`, `hey_mark_unseen`, `hey_move_to`, `hey_set_aside`, `hey_reply_later`, `hey_read_email` (threads) |
 | **Entry ID** | `entryId` | `hey_forward`, `hey_read_status` |
 | **Clearance ID** | `clearanceId` | `hey_screen_by_id` |
 

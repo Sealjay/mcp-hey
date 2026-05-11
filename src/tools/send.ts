@@ -505,6 +505,70 @@ export interface ReplyContext {
  * <time datetime="..."> element. The selectors below are intentionally broad
  * because Hey's markup has shifted over time and we need to be tolerant.
  */
+const EMAIL_ANGLE_RE = /<([^>\s]+@[^>\s]+)>/
+const EMAIL_BARE_RE = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/
+
+function matchEmail(text: string | null | undefined): string | undefined {
+  if (!text) return undefined
+  const m = text.match(EMAIL_ANGLE_RE) ?? text.match(EMAIL_BARE_RE)
+  return m?.[1]?.toLowerCase()
+}
+
+/**
+ * Find a single sender email within a wrapper. Hey's markup has evolved:
+ *   - Current (May 2026+): `<span class="entry__sender-email">…&lt;email&gt;…</span>`
+ *     and `<img title="Name <email>">` on the avatar.
+ *   - Legacy: `<img class="avatar" alt="Name <email>">`.
+ * We try all three sources in order — the first to yield an email wins.
+ */
+function extractSenderEmailFromScope(
+  scope: ReturnType<typeof parseHtml>,
+): string | undefined {
+  const senderEmailEl = scope.querySelector(".entry__sender-email")
+  const fromSpan = matchEmail(senderEmailEl?.text)
+  if (fromSpan) return fromSpan
+
+  for (const img of scope.querySelectorAll("img[title*='@']")) {
+    const fromTitle = matchEmail(img.getAttribute("title"))
+    if (fromTitle) return fromTitle
+  }
+
+  for (const avatar of scope.querySelectorAll(
+    ".avatar, img.avatar, [class*='avatar'], img[alt*='@']",
+  )) {
+    const fromAlt = matchEmail(avatar.getAttribute("alt"))
+    if (fromAlt) return fromAlt
+  }
+  return undefined
+}
+
+/**
+ * Collect every distinct participant email visible within a scope, scanning
+ * the same three sources as extractSenderEmailFromScope (sender-email spans,
+ * img titles, avatar alt attributes). Used for the page-wide participant
+ * sweep that captures recipients/CCs whose own entries may not be parseable.
+ */
+function collectParticipantEmailsFromScope(
+  scope: ReturnType<typeof parseHtml>,
+): string[] {
+  const emails: string[] = []
+  const add = (email: string | undefined) => {
+    if (email && !emails.includes(email)) emails.push(email)
+  }
+  for (const el of scope.querySelectorAll(".entry__sender-email")) {
+    add(matchEmail(el.text))
+  }
+  for (const img of scope.querySelectorAll("img[title*='@']")) {
+    add(matchEmail(img.getAttribute("title")))
+  }
+  for (const avatar of scope.querySelectorAll(
+    ".avatar, img.avatar, [class*='avatar']",
+  )) {
+    add(matchEmail(avatar.getAttribute("alt")))
+  }
+  return emails
+}
+
 export function extractThreadEntries(
   root: ReturnType<typeof parseHtml>,
 ): ThreadEntry[] {
@@ -535,22 +599,7 @@ export function extractThreadEntries(
         continue
       }
 
-      // Sender email comes from any avatar inside the wrapper whose alt
-      // contains "<email>". Fall back to a direct img[alt*='@'] match.
-      let senderEmail: string | undefined
-      const avatarEls = wrapper.querySelectorAll(
-        ".avatar, img.avatar, [class*='avatar'], img[alt*='@']",
-      )
-      for (const avatar of avatarEls) {
-        const alt = avatar.getAttribute("alt") ?? ""
-        const match =
-          alt.match(/<([^>\s]+@[^>\s]+)>/) ??
-          alt.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/)
-        if (match) {
-          senderEmail = match[1].toLowerCase()
-          break
-        }
-      }
+      const senderEmail = extractSenderEmailFromScope(wrapper)
 
       if (!senderEmail) {
         // No sender email on this wrapper - skip it; we only care about
@@ -703,24 +752,17 @@ async function getReplyContext(
   )
 
   // Participant emails: union of every distinct sender we saw, plus a
-  // page-wide avatar sweep so we still expose CC/bcc faces even when an
-  // entry-level avatar is missing.
+  // page-wide sweep so we still expose CC/bcc faces even when an
+  // entry-level scan is missing.
   const participantEmails: string[] = []
   for (const entry of threadEntries) {
     if (entry.senderEmail && !participantEmails.includes(entry.senderEmail)) {
       participantEmails.push(entry.senderEmail)
     }
   }
-  for (const avatar of root.querySelectorAll(
-    ".avatar, img.avatar, [class*='avatar']",
-  )) {
-    const alt = avatar.getAttribute("alt") ?? ""
-    const match = alt.match(/<([^>\s]+@[^>\s]+)>/)
-    if (match) {
-      const email = match[1].toLowerCase()
-      if (!participantEmails.includes(email)) {
-        participantEmails.push(email)
-      }
+  for (const email of collectParticipantEmailsFromScope(root)) {
+    if (!participantEmails.includes(email)) {
+      participantEmails.push(email)
     }
   }
 
