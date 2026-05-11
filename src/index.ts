@@ -25,11 +25,13 @@ import {
   bubbleUp,
   bubbleUpIfNoReply,
   ignoreThread,
+  markAllSeen,
   markAsNotSpam,
   markAsRead,
   markAsSpam,
   markAsUnread,
   markAsUnseen,
+  markPostingSeen,
   moveTo,
   popBubble,
   removeFromCollection,
@@ -166,6 +168,7 @@ const tools: Tool[] = [
   // Reading tools
   {
     name: "hey_list_emails",
+    annotations: { readOnlyHint: true, openWorldHint: true },
     description:
       "List emails in a Hey.com folder/view. Returns cached results unless force_refresh=true. Each email includes id, topicId, postingId, entryId, from, subject, date, and unread status.",
     inputSchema: {
@@ -195,6 +198,7 @@ const tools: Tool[] = [
   },
   {
     name: "hey_imbox_summary",
+    annotations: { readOnlyHint: true, openWorldHint: true },
     description:
       "Get a complete Imbox summary including screener count, bubbled up emails, and new emails. Use this for a comprehensive view of the inbox state.",
     inputSchema: {
@@ -209,6 +213,7 @@ const tools: Tool[] = [
   },
   {
     name: "hey_list_set_aside",
+    annotations: { readOnlyHint: true, openWorldHint: true },
     description:
       "List emails in the Set Aside stack. Returns cached results unless force_refresh=true.",
     inputSchema: {
@@ -223,6 +228,7 @@ const tools: Tool[] = [
   },
   {
     name: "hey_list_reply_later",
+    annotations: { readOnlyHint: true, openWorldHint: true },
     description:
       "List emails in the Reply Later stack. Returns cached results unless force_refresh=true.",
     inputSchema: {
@@ -237,6 +243,7 @@ const tools: Tool[] = [
   },
   {
     name: "hey_list_screener",
+    annotations: { readOnlyHint: true, openWorldHint: true },
     description:
       "List emails waiting in the Screener. Returns cached results unless force_refresh=true.",
     inputSchema: {
@@ -251,6 +258,7 @@ const tools: Tool[] = [
   },
   {
     name: "hey_list_labels",
+    annotations: { readOnlyHint: true, openWorldHint: true },
     description:
       "List all labels/folders in Hey.com. Returns array of {id, name, color?}. Use the id with hey_label or hey_list_label_emails.",
     inputSchema: {
@@ -260,6 +268,7 @@ const tools: Tool[] = [
   },
   {
     name: "hey_list_label_emails",
+    annotations: { readOnlyHint: true, openWorldHint: true },
     description:
       "List emails with a specific label. Returns cached results unless force_refresh=true.",
     inputSchema: {
@@ -287,6 +296,7 @@ const tools: Tool[] = [
   },
   {
     name: "hey_list_collections",
+    annotations: { readOnlyHint: true, openWorldHint: true },
     description:
       "List all collections in Hey.com. Returns array of {id, name}. Use the id with hey_collection or hey_list_collection_emails.",
     inputSchema: {
@@ -296,6 +306,7 @@ const tools: Tool[] = [
   },
   {
     name: "hey_list_collection_emails",
+    annotations: { readOnlyHint: true, openWorldHint: true },
     description:
       "List emails in a specific collection. Returns cached results unless force_refresh=true.",
     inputSchema: {
@@ -323,6 +334,12 @@ const tools: Tool[] = [
   },
   {
     name: "hey_label",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "Add or remove a label on an email thread. Returns {success, error?}. Use hey_list_labels to discover available label IDs.",
     inputSchema: {
@@ -348,6 +365,12 @@ const tools: Tool[] = [
   },
   {
     name: "hey_collection",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "Add or remove an email thread from a collection. Returns {success, error?}. Use hey_list_collections to discover collection IDs.",
     inputSchema: {
@@ -375,6 +398,7 @@ const tools: Tool[] = [
   },
   {
     name: "hey_read_email",
+    annotations: { readOnlyHint: true, openWorldHint: true },
     description:
       "Read an email thread's full content. Returns all messages in the thread via entries[] array (each with entryId, from, to, cc, date, body). Also returns attachments[] metadata and calendar_invites[] when present — use hey_download_attachment to save files to disk, or hey_get_calendar_invite to parse .ics details. Use format='html' (default) for rich content with thread entries, or format='text' for decoded RFC822 plain text of the first message.",
     inputSchema: {
@@ -401,6 +425,12 @@ const tools: Tool[] = [
   },
   {
     name: "hey_download_attachment",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     description:
       "Download a single attachment from an email and save it to disk. First call hey_read_email to get the attachments[] array with IDs, filenames, and sizes, then call this tool with the attachment_id to save the file. Returns {local_path, filename, size, mime}.",
     inputSchema: {
@@ -427,6 +457,7 @@ const tools: Tool[] = [
   },
   {
     name: "hey_get_calendar_invite",
+    annotations: { readOnlyHint: true, openWorldHint: true },
     description:
       "Extract and parse a calendar invite (.ics) from an email. First call hey_read_email — if calendar_invites[] is present, call this tool to get full details: title, start, end, location, attendees, organizer, description, and raw_ics. To save the .ics file to disk, use hey_download_attachment instead.",
     inputSchema: {
@@ -448,6 +479,7 @@ const tools: Tool[] = [
   },
   {
     name: "hey_search",
+    annotations: { readOnlyHint: true, openWorldHint: true },
     description:
       "Search emails by query. Uses local FTS cache first, then network. Use force_refresh for real-time results.",
     inputSchema: {
@@ -473,6 +505,12 @@ const tools: Tool[] = [
   // Sending tools
   {
     name: "hey_send_email",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     description:
       "Send a new email immediately (no draft stage). Returns {success, error?}. Use for standalone outbound messages; use hey_reply for thread responses, or hey_forward to share existing emails with new recipients.",
     inputSchema: {
@@ -502,8 +540,14 @@ const tools: Tool[] = [
   },
   {
     name: "hey_reply",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     description:
-      "Reply to an email thread. By default the reply goes to the other thread participants (your own address is automatically excluded). If you started the thread or sent the most recent message, pass `to` explicitly to avoid the reply failing with no valid recipients. Use hey_send_email for new standalone messages, or hey_forward to share content with third parties.",
+      "Reply to an email thread. By default the reply goes to the other thread participants (your own address is automatically excluded). Prefer this over hey_send_email any time you're responding to an existing thread — it preserves threading on both ends. Pass `to` to redirect the reply to specific recipients: useful for chasing your own threads (where the default would loop back to you), for redirecting away from a mailing-list address onto a specific person, or for any case where you want the response to land somewhere other than the default participants. Use hey_send_email only for genuinely new conversations.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -519,7 +563,7 @@ const tools: Tool[] = [
           type: "array",
           items: { type: "string" },
           description:
-            "Optional override of the To: line. Use this when chasing a thread where you sent the most recent message, so the chase lands on the original recipient instead of looping back to your own address.",
+            "Optional override of the To: line. Replaces the auto-detected participants. Use to: (a) chase your own thread without looping back to yourself, (b) redirect a mailing-list reply to a specific person, or (c) generally target the reply at recipients other than the thread defaults.",
         },
         cc: {
           type: "array",
@@ -534,6 +578,12 @@ const tools: Tool[] = [
 
   {
     name: "hey_forward",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     description:
       "Forward an existing email to new recipients immediately. The original thread remains unchanged. Returns {success, error?}. Use instead of hey_send_email when sharing existing content; use hey_reply for responding within a thread.",
     inputSchema: {
@@ -571,6 +621,12 @@ const tools: Tool[] = [
   // Organisation tools
   {
     name: "hey_set_aside",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "Move an email thread to Set Aside for later. Reversible via hey_unset_aside (requires postingId from hey_list_set_aside). Returns {success, error?}. Use for emails you plan to revisit but want out of the Imbox. Does not affect future emails from the sender.",
     inputSchema: {
@@ -587,6 +643,12 @@ const tools: Tool[] = [
   },
   {
     name: "hey_reply_later",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "Move an email thread to Reply Later. Reversible via hey_remove_reply_later (requires postingId from hey_list_reply_later). Returns {success, error?}. Use for emails you intend to respond to but not right now.",
     inputSchema: {
@@ -603,6 +665,12 @@ const tools: Tool[] = [
   },
   {
     name: "hey_unset_aside",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "Remove an email from Set Aside (move it back to the Imbox or its original location). Requires the posting_id from hey_list_set_aside.",
     inputSchema: {
@@ -619,6 +687,12 @@ const tools: Tool[] = [
   },
   {
     name: "hey_remove_reply_later",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       'Remove an email from Reply Later (mark as "Done", moving it back to the Imbox). Requires the posting_id from hey_list_reply_later.',
     inputSchema: {
@@ -635,8 +709,14 @@ const tools: Tool[] = [
   },
   {
     name: "hey_screen",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
-      "Approve or reject a first-time sender from the Screener by email address. Approve: the sender's current and future emails will arrive in the Imbox. Reject: the sender is PERMANENTLY blocked — all their emails are silently discarded and this cannot be undone via MCP. Returns {success, error?}. Use hey_list_screener to see pending senders, or hey_screen_by_id to act on clearance IDs directly.",
+      "Approve or reject a sender by email address. Approve: routes the sender's current and future emails into the chosen destination (defaults to imbox). Reject (a.k.a. screen out): blocks the sender from sending you further emails — works for both pending screener entries AND already-approved senders (falls back to the contact-page 'Screened Out' affordance via /contacts/{id}/clearance). Reject does NOT flag emails as spam; existing emails are left untouched. Reversible from the Hey UI by visiting the contact page; not yet exposed via MCP. Returns {success, error?}. Use hey_list_screener to see pending senders, or hey_screen_by_id for clearance IDs.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -648,7 +728,13 @@ const tools: Tool[] = [
           type: "string",
           enum: ["approve", "reject"],
           description:
-            "approve: allow this sender's emails through. reject: permanently block this sender (DESTRUCTIVE, irreversible)",
+            "approve: allow this sender's emails through (routed to `destination`). reject: block future emails from this sender. Does not flag as spam, does not move existing emails. Reversible via the Hey UI's contact page.",
+        },
+        destination: {
+          type: "string",
+          enum: ["imbox", "feed", "paper_trail"],
+          description:
+            "Where future emails from this sender land when approved: imbox (default, important mail), feed (newsletters/updates), paper_trail (receipts/automated). Ignored when action is reject.",
         },
       },
       required: ["sender_email", "action"],
@@ -656,8 +742,14 @@ const tools: Tool[] = [
   },
   {
     name: "hey_screen_by_id",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
-      "Approve or reject a first-time sender from the Screener by clearance ID. Approve: allows future emails from this sender. Reject: PERMANENTLY blocks the sender — cannot be undone via MCP. Returns {success, error?}. Use hey_list_screener to get clearance IDs.",
+      "Approve or reject a first-time sender from the Screener by clearance ID. Approve: allows future emails from this sender into the chosen destination (defaults to imbox). Reject: blocks future emails from this sender via the screener. Reversible from the Hey UI's contact page (not yet via MCP). Returns {success, error?}. Use hey_list_screener to get clearance IDs; for senders that have already left the screener, use hey_screen by email instead.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -669,7 +761,13 @@ const tools: Tool[] = [
           type: "string",
           enum: ["approve", "reject"],
           description:
-            "approve: allow this sender's emails through. reject: permanently block this sender (DESTRUCTIVE, irreversible)",
+            "approve: allow this sender's emails through (routed to `destination`). reject: block future emails from this sender. Does not flag as spam.",
+        },
+        destination: {
+          type: "string",
+          enum: ["imbox", "feed", "paper_trail"],
+          description:
+            "Where future emails from this sender land when approved: imbox (default, important mail), feed (newsletters/updates), paper_trail (receipts/automated). Ignored when action is reject.",
         },
       },
       required: ["clearance_id", "action"],
@@ -677,14 +775,21 @@ const tools: Tool[] = [
   },
   {
     name: "hey_set_status",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
-      "Change an email thread's status. Returns {success, error?}. Trash and spam are reversible via restore and unspam actions respectively. DESTRUCTIVE: trash removes from Imbox, spam blocks the sender.",
+      "Change an email thread's status. Returns {success, error?}. Trash and spam are reversible via restore and unspam actions respectively. DESTRUCTIVE: trash removes from Imbox, spam blocks the sender. Paper Trail bundles (postingId-only items with no thread) support action=trash only; spam/restore/unspam on a bundle return an explicit error pointing to the bundle's individual entries.",
     inputSchema: {
       type: "object" as const,
       properties: {
         id: {
           type: "string",
-          description: "The topic/thread ID (use topicId from list operations)",
+          description:
+            "The topic/thread ID (use topicId from list operations). For Paper Trail bundles, pass the postingId — trash works via a posting-based fallback, other actions return an error.",
         },
         action: {
           type: "string",
@@ -698,6 +803,12 @@ const tools: Tool[] = [
   },
   {
     name: "hey_move_to",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "Move an email thread between Hey.com views: imbox, feed, or paper_trail. Returns {success, error?}. Use paper_trail for receipts/automated mail, feed for newsletters, imbox to restore. Reversible by moving to a different destination. Does not affect trash, spam, or screener — use hey_set_status or hey_screen for those.",
     inputSchema: {
@@ -720,8 +831,14 @@ const tools: Tool[] = [
   },
   {
     name: "hey_mark_unseen",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
-      "Mark a thread as unseen/unread to reset its read status. Returns {success, error?}. Reading the email via hey_read_email implicitly marks it as seen again.",
+      "Mark a thread as unseen/unread to reset its read status. Returns {success, error?}. Reading the email via hey_read_email implicitly marks it as seen again. To clear the orange 'New for you' tray dot without re-marking unseen, use hey_mark_seen.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -734,7 +851,34 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "hey_mark_seen",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Clear the orange 'New for you' tray dot — mirrors Hey's 'Mark all as seen' UI affordance. Returns {success, error?}. Pass a posting_id to clear just that one item (POST /postings/seen); omit posting_id to clear the entire Imbox tray in one call (POST /boxes/{imboxId}/observation). Reversible per-item via hey_mark_unseen. Use after triaging or skimming a batch to keep the tray tidy without re-marking threads unread.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        posting_id: {
+          type: "string",
+          description:
+            "Optional. The posting ID (from postingId field on list operations) to clear from the New for you tray. When omitted, the entire Imbox tray is marked seen in a single bulk request.",
+        },
+      },
+    },
+  },
+  {
     name: "hey_read_status",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "Set the read/unread status of an email entry. Returns {success, error?}. Reversible by calling again with the opposite status. Operates on individual entries (use entryId), not whole threads. For marking an entire thread as unseen, use hey_mark_unseen instead.",
     inputSchema: {
@@ -756,6 +900,12 @@ const tools: Tool[] = [
   },
   {
     name: "hey_bubble_up",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "Schedule an email to bubble up (reappear) at a specific time. Returns {success, error?}. Reversible via hey_pop_bubble. The 'now' slot requires a topicId; other slots accept topicId or postingId.",
     inputSchema: {
@@ -791,6 +941,12 @@ const tools: Tool[] = [
   },
   {
     name: "hey_bubble_up_if_no_reply",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "Schedule an email to bubble up ONLY if there's no reply by a deadline date. Returns {success, error?}. The email will only reappear if the recipient hasn't replied. Reversible via hey_pop_bubble.",
     inputSchema: {
@@ -812,6 +968,12 @@ const tools: Tool[] = [
   },
   {
     name: "hey_pop_bubble",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "Pop (dismiss) a bubbled-up email so it sinks back into the Imbox. The email is not deleted — it just stops being pinned at the top. Returns {success, error?}.",
     inputSchema: {
@@ -828,6 +990,12 @@ const tools: Tool[] = [
   },
   {
     name: "hey_thread_mute",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "Mute or unmute a thread (called 'Ignore' in Hey.com's UI). Muting stops notifications for the thread but keeps it in its current view — the thread is not moved or deleted. Returns {success, error?}. Reversible by calling with the opposite action. To check if a thread is currently muted, use hey_read_email — the response includes a 'muted' field.",
     inputSchema: {
@@ -851,6 +1019,7 @@ const tools: Tool[] = [
   // Cache management tool
   {
     name: "hey_cache_status",
+    annotations: { readOnlyHint: true, openWorldHint: false },
     description:
       "Get cache statistics including message counts, cache age, and storage estimate. Read-only with no side effects. Optionally query a specific folder for message/unread counts. Use before force_refresh decisions.",
     inputSchema: {
@@ -1397,6 +1566,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "hey_screen": {
         const senderEmail = validateEmail(args?.sender_email)
         const action = args?.action as string
+        const destination = args?.destination as
+          | "imbox"
+          | "feed"
+          | "paper_trail"
+          | undefined
         if (!senderEmail) {
           return {
             content: [
@@ -1419,15 +1593,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
+        if (
+          destination &&
+          !["imbox", "feed", "paper_trail"].includes(destination)
+        ) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: destination must be one of imbox, feed, paper_trail",
+              },
+            ],
+            isError: true,
+          }
+        }
         result =
           action === "approve"
-            ? await screenIn(senderEmail)
+            ? await screenIn(senderEmail, destination)
             : await screenOut(senderEmail)
         break
       }
       case "hey_screen_by_id": {
         const clearanceId = validateId(args?.clearance_id)
         const action = args?.action as string
+        const destination = args?.destination as
+          | "imbox"
+          | "feed"
+          | "paper_trail"
+          | undefined
         if (!clearanceId) {
           return {
             content: [
@@ -1450,9 +1643,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           }
         }
+        if (
+          destination &&
+          !["imbox", "feed", "paper_trail"].includes(destination)
+        ) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: destination must be one of imbox, feed, paper_trail",
+              },
+            ],
+            isError: true,
+          }
+        }
         result =
           action === "approve"
-            ? await screenInById(clearanceId)
+            ? await screenInById(clearanceId, destination)
             : await screenOutById(clearanceId)
         break
       }
@@ -1532,6 +1739,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
         result = await markAsUnseen(id)
+        break
+      }
+      case "hey_mark_seen": {
+        const postingId =
+          args?.posting_id === undefined
+            ? undefined
+            : validateId(args?.posting_id)
+        if (args?.posting_id !== undefined && !postingId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: posting_id must be a valid ID string (omit it to mark the whole Imbox tray seen)",
+              },
+            ],
+            isError: true,
+          }
+        }
+        result = postingId
+          ? await markPostingSeen(postingId)
+          : await markAllSeen()
         break
       }
       case "hey_read_status": {

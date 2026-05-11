@@ -40,10 +40,13 @@ describe("HeyClient.refreshSession", () => {
 
     expect(runAuthHelperCalls).toBe(1)
 
-    if (!releaseAuthHelper) {
+    // Cast: TS narrows `releaseAuthHelper` to `null` after the reset above
+    // and can't see that the runAuthHelper closure has reassigned it.
+    const release = releaseAuthHelper as (() => void) | null
+    if (!release) {
       throw new Error("expected auth helper to be waiting")
     }
-    releaseAuthHelper()
+    release()
 
     await Promise.all([refreshA, refreshB])
   })

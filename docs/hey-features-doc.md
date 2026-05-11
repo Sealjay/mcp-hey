@@ -54,12 +54,14 @@ Tool definitions and parameters live in [`TOOLS.md`](TOOLS.md). Endpoint details
 | Reply Later | Action bar | `hey_reply_later` | Implemented |
 | Remove from Reply Later ("Done") | Action bar | `hey_remove_reply_later` | Implemented |
 | Mark as Unseen | More > Mark Unseen | `hey_mark_unseen` | Implemented |
+| Mark as Seen (per-posting) | (click tray item) | `hey_mark_seen` (with posting_id) | Implemented |
+| Mark all as Seen | "Mark all as seen" button atop New for you | `hey_mark_seen` (no args) | Implemented |
 | Mark Read | (automatic / click) | `hey_read_status` (status=read) | Implemented |
 | Mark Unread | More > Mark Unread | `hey_read_status` (status=unread) | Implemented |
-| Trash | More > Trash | `hey_set_status` (action=trash) | Implemented |
-| Restore from Trash | (in Trash view) | `hey_set_status` (action=restore) | Implemented |
-| Mark as Spam | Message menu > Report spam | `hey_set_status` (action=spam) | Implemented |
-| Mark as Not Spam | (in Spam view) | `hey_set_status` (action=unspam) | Implemented |
+| Trash | More > Trash | `hey_set_status` (action=trash) | Implemented (bundles fall back to `/postings/trash`) |
+| Restore from Trash | (in Trash view) | `hey_set_status` (action=restore) | Implemented (not supported for bundles) |
+| Mark as Spam | Message menu > Report spam | `hey_set_status` (action=spam) | Implemented (not supported for bundles — open an entry inside) |
+| Mark as Not Spam | (in Spam view) | `hey_set_status` (action=unspam) | Implemented (not supported for bundles) |
 | Ignore Thread | More > Ignore this thread | `hey_thread_mute` (action=mute) | Implemented |
 | Unignore Thread | More > Stop ignoring | `hey_thread_mute` (action=unmute) | Implemented |
 | Move to Imbox/Feed/Paper Trail | More > Move… | `hey_move_to` | Implemented |
@@ -76,10 +78,10 @@ Tool definitions and parameters live in [`TOOLS.md`](TOOLS.md). Endpoint details
 
 | Feature | UI Location | MCP Tool | Status |
 |---------|-------------|----------|--------|
-| Screen In (by email) | Screener | `hey_screen` (action=approve) | Implemented |
-| Screen In (by clearance ID) | Screener | `hey_screen_by_id` (action=approve) | Implemented |
-| Screen Out (by email) | Screener | `hey_screen` (action=reject) | Implemented |
-| Screen Out (by clearance ID) | Screener | `hey_screen_by_id` (action=reject) | Implemented |
+| Screen In (by email) | Screener | `hey_screen` (action=approve, optional destination=imbox/feed/paper_trail) | Implemented |
+| Screen In (by clearance ID) | Screener | `hey_screen_by_id` (action=approve, optional destination=imbox/feed/paper_trail) | Implemented |
+| Screen Out (by email) | Screener / Contact page | `hey_screen` (action=reject) | Implemented — works for pending screener entries AND already-approved senders (via contact-page fallback) |
+| Screen Out (by clearance ID) | Screener | `hey_screen_by_id` (action=reject) | Implemented (screener entries only — for already-approved senders use `hey_screen` by email) |
 | Clear All Screener | Clear all… | — | Not implemented |
 
 ## Labels & Collections

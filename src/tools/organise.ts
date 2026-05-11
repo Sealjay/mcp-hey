@@ -28,27 +28,81 @@ function methodOverrideBody(
 }
 
 /**
- * Common pattern for setting a topic status via a `_method=put` POST.
+ * Resolve a topic ID to one of its entry IDs by reading the thread page.
+ * Hey's status forms POST to `/entries/{entryId}/status/...`, not
+ * `/topics/{id}/status/...` (the latter returns 404 as of 2026-05).
+ * Returns null when the topic page has no entries — typically a Paper
+ * Trail bundle, in which case the caller falls back to posting-based
+ * endpoints.
+ */
+const entryIdCache = new Map<string, string>()
+
+async function resolveEntryIdForTopic(id: string): Promise<string | null> {
+  const cached = entryIdCache.get(id)
+  if (cached) return cached
+
+  try {
+    const html = await heyClient.fetchHtml(`/topics/${id}`)
+    // Prefer entries in status forms (definitive); fall back to any /entries/{id}
+    const match =
+      html.match(/\/entries\/(\d+)\/status\//) ?? html.match(/\/entries\/(\d+)/)
+    if (match) {
+      entryIdCache.set(id, match[1])
+      return match[1]
+    }
+  } catch {
+    // Topic fetch failed — likely a bundle posting (no thread to resolve)
+  }
+  return null
+}
+
+/**
+ * Set a thread's status (trashed/active/spam/ham) via the entry-based status
+ * endpoint. For Paper Trail bundles, which have a postingId but no thread,
+ * falls back to `POST /postings/trash` for `trashed`; other statuses return
+ * an explicit error because Hey's bundle UI does not expose them.
  */
 async function setTopicStatus(
-  topicId: string,
+  id: string,
   status: string,
   cacheAction: CacheAction,
 ): Promise<OrganiseResult> {
-  if (!topicId) {
-    return { success: false, error: "Topic ID is required" }
+  if (!id) {
+    return { success: false, error: "ID is required" }
   }
 
   try {
-    const formData = methodOverrideBody("put")
+    const entryId = await resolveEntryIdForTopic(id)
 
-    const response = await withCsrfRetry(() =>
-      heyClient.post(`/topics/${topicId}/status/${status}`, formData),
-    )
+    if (entryId) {
+      const formData = methodOverrideBody("put")
+      const response = await withCsrfRetry(() =>
+        heyClient.post(`/entries/${entryId}/status/${status}`, formData),
+      )
+      return organiseResponseToResult(response, () =>
+        invalidateForAction(cacheAction, id),
+      )
+    }
 
-    return organiseResponseToResult(response, () =>
-      invalidateForAction(cacheAction, topicId),
-    )
+    // Bundle fallback: no thread to resolve. Treat `id` as a postingId.
+    if (status === "trashed") {
+      const formData = new URLSearchParams()
+      formData.append("posting_ids", id)
+      const response = await withCsrfRetry(() =>
+        heyClient.post("/postings/trash", formData),
+      )
+      return organiseResponseToResult(response, () =>
+        invalidateForAction(cacheAction, id),
+      )
+    }
+
+    return {
+      success: false,
+      error:
+        status === "spam"
+          ? "Spam-and-block is not available for Paper Trail bundles via the API. Open an individual entry inside the bundle and report that as spam, or use action=trash to remove the bundle without blocking the sender."
+          : `Cannot apply status=${status} to a Paper Trail bundle (id=${id}). Bundles only support trash via /postings/trash; spam/restore require an entry-bearing thread.`,
+    }
   } catch (err) {
     return { success: false, error: toUserError(err) }
   }
@@ -192,7 +246,10 @@ export async function removeFromReplyLater(
   }
 }
 
-export async function screenIn(senderEmail: string): Promise<OrganiseResult> {
+export async function screenIn(
+  senderEmail: string,
+  destination?: MoveDestination,
+): Promise<OrganiseResult> {
   if (!senderEmail) {
     return { success: false, error: "Sender email is required" }
   }
@@ -206,7 +263,7 @@ export async function screenIn(senderEmail: string): Promise<OrganiseResult> {
       }
     }
 
-    return screenInById(clearanceId)
+    return screenInById(clearanceId, destination)
   } catch (err) {
     return { success: false, error: toUserError(err) }
   }
@@ -262,14 +319,22 @@ export async function screenOut(senderEmail: string): Promise<OrganiseResult> {
 
   try {
     const clearanceId = await findClearanceIdByEmail(senderEmail)
-    if (!clearanceId) {
-      return {
-        success: false,
-        error: `Sender ${senderEmail} not found in screener. Use hey_list_screener to see pending senders.`,
-      }
+    if (clearanceId) {
+      return screenOutById(clearanceId)
     }
 
-    return screenOutById(clearanceId)
+    // Sender isn't pending in the screener; they've already been approved.
+    // Fall back to the contact-page "Screened Out" affordance, which blocks
+    // future emails without flagging existing ones as spam.
+    const contactId = await findContactIdByEmail(senderEmail)
+    if (contactId) {
+      return screenOutByContactId(contactId)
+    }
+
+    return {
+      success: false,
+      error: `Sender ${senderEmail} not found in screener or contacts. They may not exist in your Hey account.`,
+    }
   } catch (err) {
     return { success: false, error: toUserError(err) }
   }
@@ -288,6 +353,75 @@ export async function screenOutById(
 
     const response = await withCsrfRetry(() =>
       heyClient.post(`/clearances/${clearanceId}`, formData),
+    )
+
+    return organiseResponseToResult(response, () =>
+      invalidateForAction("archive"),
+    )
+  } catch (err) {
+    return { success: false, error: toUserError(err) }
+  }
+}
+
+/**
+ * Find a contact ID for an already-approved sender by searching Hey for the
+ * email address. Returns null if no contact matches.
+ */
+async function findContactIdByEmail(
+  senderEmail: string,
+): Promise<string | null> {
+  const html = await heyClient.fetchHtml(
+    `/search?q=${encodeURIComponent(senderEmail)}`,
+  )
+  const root = parseHtml(html)
+  const needle = senderEmail.toLowerCase()
+
+  // Prefer the search result's dedicated contacts row.
+  const contactsLinks = root.querySelectorAll(
+    "a.action-group__action--contacts[href*='/contacts/']",
+  )
+  for (const link of contactsLinks) {
+    if (link.text.toLowerCase().includes(needle)) {
+      const href = link.getAttribute("href")
+      const match = href?.match(/\/contacts\/(\d+)/)
+      if (match) return match[1]
+    }
+  }
+
+  // Fall back to any /contacts/{id} anchor whose visible text includes the
+  // email (covers search-page variants).
+  const anyContact = root.querySelectorAll("a[href*='/contacts/']")
+  for (const link of anyContact) {
+    if (link.text.toLowerCase().includes(needle)) {
+      const href = link.getAttribute("href")
+      const match = href?.match(/\/contacts\/(\d+)/)
+      if (match) return match[1]
+    }
+  }
+
+  return null
+}
+
+/**
+ * Screen out (block) an already-approved sender via the contact page's
+ * "Screened Out" affordance. Distinct from the spam-and-block path —
+ * existing emails stay where they are, but future emails are blocked.
+ */
+async function screenOutByContactId(
+  contactId: string,
+): Promise<OrganiseResult> {
+  if (!contactId) {
+    return { success: false, error: "Contact ID is required" }
+  }
+
+  try {
+    const formData = methodOverrideBody("put")
+
+    const response = await withCsrfRetry(() =>
+      heyClient.post(
+        `/contacts/${contactId}/clearance?status=denied`,
+        formData,
+      ),
     )
 
     return organiseResponseToResult(response, () =>
@@ -363,6 +497,64 @@ export async function markAsUnseen(topicId: string): Promise<OrganiseResult> {
     return organiseResponseToResult(response, () =>
       updateReadStatus(topicId, false),
     )
+  } catch (err) {
+    return { success: false, error: toUserError(err) }
+  }
+}
+
+/**
+ * Clear the orange "New for you" dot for a single posting. Mirrors Hey's
+ * `POST /postings/seen` — the same request the UI fires when a user clicks a
+ * tray item.
+ */
+export async function markPostingSeen(
+  postingId: string,
+): Promise<OrganiseResult> {
+  if (!postingId) {
+    return { success: false, error: "Posting ID is required" }
+  }
+
+  try {
+    const formData = new URLSearchParams()
+    formData.append("posting_ids", postingId)
+
+    const response = await withCsrfRetry(() =>
+      heyClient.post("/postings/seen", formData),
+    )
+
+    return organiseResponseToResult(response, () =>
+      updateReadStatus(postingId, true),
+    )
+  } catch (err) {
+    return { success: false, error: toUserError(err) }
+  }
+}
+
+/**
+ * Clear the orange "New for you" dot for the entire Imbox tray — equivalent
+ * to clicking the "Mark all as seen" button. Posts to
+ * `/boxes/{imboxId}/observation`, creating a single Observation record
+ * that acknowledges every currently-new item.
+ */
+export async function markAllSeen(): Promise<OrganiseResult> {
+  try {
+    const boxId = await getBoxId("imbox")
+    if (!boxId) {
+      return {
+        success: false,
+        error:
+          "Could not determine Imbox box_id. The page structure may have changed.",
+      }
+    }
+
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/boxes/${boxId}/observation`),
+    )
+
+    return organiseResponseToResult(response, () => {
+      // "Seen" is a tray-level acknowledgement, not a per-entry read state.
+      // No cache row to update for the bulk variant.
+    })
   } catch (err) {
     return { success: false, error: toUserError(err) }
   }
@@ -566,6 +758,7 @@ export async function unignoreThread(
 
 export async function screenInById(
   clearanceId: string,
+  destination?: MoveDestination,
 ): Promise<OrganiseResult> {
   if (!clearanceId) {
     return { success: false, error: "Clearance ID is required" }
@@ -574,6 +767,24 @@ export async function screenInById(
   try {
     const formData = methodOverrideBody("patch")
     formData.append("status", "approved")
+
+    if (destination && destination !== "imbox") {
+      const boxKey = destinationBoxKey[destination]
+      if (!boxKey) {
+        return {
+          success: false,
+          error: `Invalid destination: ${destination}. Must be imbox, feed, or paper_trail.`,
+        }
+      }
+      const boxId = await getBoxId(boxKey)
+      if (!boxId) {
+        return {
+          success: false,
+          error: `Could not determine box_id for ${destination}. The page structure may have changed.`,
+        }
+      }
+      formData.append("designation_box_id", boxId)
+    }
 
     const response = await withCsrfRetry(() =>
       heyClient.post(`/clearances/${clearanceId}`, formData),

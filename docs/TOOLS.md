@@ -2,7 +2,7 @@
 
 This document provides detailed documentation for all MCP tools provided by mcp-hey.
 
-**Total Tools: 33**
+**Total Tools: 34**
 
 ---
 
@@ -11,7 +11,7 @@ This document provides detailed documentation for all MCP tools provided by mcp-
 - [Reading Tools](#reading-tools) (12 tools)
 - [Search Tool](#search-tool) (1 tool)
 - [Sending Tools](#sending-tools) (3 tools)
-- [Organisation Tools](#organisation-tools) (16 tools)
+- [Organisation Tools](#organisation-tools) (17 tools)
 - [Cache Management](#cache-management) (1 tool)
 - [Error Handling](#error-handling)
 
@@ -397,14 +397,14 @@ Send a new email.
 
 ### hey_reply
 
-Reply to an email thread. By default the reply goes to the other thread participants. Pass `to` (and optionally `cc`) to override the recipient line, mirroring Hey's web UI behaviour when chasing a thread you started.
+Reply to an email thread. Prefer this over `hey_send_email` whenever responding to an existing thread — it preserves threading. By default the reply goes to the other thread participants (your own address excluded). Pass `to` (and optionally `cc`) to redirect the recipients — useful for chasing your own threads, replying to a list message at a specific person, or otherwise overriding the default participants.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | thread_id | string | **Yes** | - | The thread/topic ID to reply to |
 | body | string | **Yes** | - | Reply body content (HTML supported) |
-| to | string[] | No | thread participants minus caller | Override the To: line. Use this when chasing a thread where you sent the most recent message, so the chase lands on the original recipient instead of looping back to your own address. |
+| to | string[] | No | thread participants minus caller | Override the To: line. Replaces the auto-detected participants. Use to: (a) chase your own thread without looping back to yourself, (b) redirect a mailing-list reply to a specific person, or (c) generally target the reply at recipients other than the thread defaults. |
 | cc | string[] | No | - | Optional CC override. Only honoured when `to` is also provided. |
 
 **Returns:**
@@ -645,6 +645,30 @@ Mark an email thread as unseen/unread.
 
 ---
 
+### hey_mark_seen
+
+Clear the orange "New for you" tray dot — mirrors Hey's "Mark all as seen" UI affordance. Pass a `posting_id` to clear just that one item; omit it to clear the entire Imbox tray in one bulk call. Reversible per-item via `hey_mark_unseen`.
+
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| posting_id | string | No | bulk (whole tray) | Optional. The `postingId` to clear from the New for you tray. When omitted, clears every currently-new item in the Imbox tray. |
+
+**Behaviour:**
+- With `posting_id`: `POST /postings/seen` body `posting_ids={postingId}`.
+- Without `posting_id`: `POST /boxes/{imboxId}/observation` (account-specific box id discovered at runtime).
+
+**Returns:**
+```json
+{
+  "success": true
+}
+```
+
+> "Seen" is the tray-level acknowledgement state shown as the orange dot in Hey's UI. It is distinct from per-entry read state (`hey_read_status`) and from the thread-level unseen toggle (`hey_mark_unseen`). Reading or organising a thread does not automatically clear the dot.
+
+---
+
 ### hey_read_status
 
 Set the read/unread status of an email entry. Reversible by calling again with the opposite status. Operates on individual entries, not whole threads.
@@ -666,21 +690,21 @@ Set the read/unread status of an email entry. Reversible by calling again with t
 
 ### hey_set_status
 
-Change an email thread's status (trash, restore, spam, unspam).
+Change an email thread's status (trash, restore, spam, unspam). Hits Hey's entry-based status endpoint; the topic is resolved to one of its entries by reading the thread page. For Paper Trail bundles (postingId-only items with no thread): `trash` falls back to `POST /postings/trash`; other actions return an explicit error.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| id | string | **Yes** | - | The topic/thread ID (use `topicId` from list operations) |
+| id | string | **Yes** | - | The topic/thread ID (use `topicId` from list operations). For Paper Trail bundles, pass the `postingId` — `trash` works via fallback, other actions return an error pointing to the bundle's individual entries. |
 | action | string | **Yes** | - | Status action (see table below) |
 
 **Action values:**
-| Value | Description |
-|-------|-------------|
-| `trash` | Move to Trash (reversible via `restore`) |
-| `restore` | Recover from Trash |
-| `spam` | Mark as spam and block sender (reversible via `unspam`) |
-| `unspam` | Restore from spam folder |
+| Value | Description | Bundle support |
+|-------|-------------|----------------|
+| `trash` | Move to Trash (reversible via `restore`) | Yes (via `/postings/trash`) |
+| `restore` | Recover from Trash | No (open an individual entry inside the bundle) |
+| `spam` | Mark as spam and block sender (reversible via `unspam`) | No (Hey's bundle UI does not expose this) |
+| `unspam` | Restore from spam folder | No (open an individual entry inside the bundle) |
 
 **Returns:**
 ```json
@@ -740,13 +764,14 @@ Mute or unmute a thread (called "Ignore" in Hey.com's UI). Muting stops notifica
 
 ### hey_screen
 
-Approve or reject a first-time sender from the Screener by email address.
+Approve or reject a sender by email address. `reject` (a.k.a. "screen out") works whether the sender is currently pending in the Screener OR already approved — for already-approved senders, the tool falls back to the contact-page "Screened Out" affordance (`POST /contacts/{id}/clearance?status=denied`). Rejection does **not** flag existing emails as spam; it only blocks future emails from this sender.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | sender_email | string | **Yes** | - | The sender's email address |
-| action | string | **Yes** | - | `approve` to allow emails through, `reject` to permanently block (DESTRUCTIVE, irreversible) |
+| action | string | **Yes** | - | `approve` to allow emails through, `reject` (a.k.a. screen out) to block future emails from this sender. |
+| destination | string | No | `imbox` | When `action=approve`, the view future emails from this sender land in: `imbox` (default), `feed`, or `paper_trail`. Ignored when `action=reject`. |
 
 **Returns:**
 ```json
@@ -755,19 +780,20 @@ Approve or reject a first-time sender from the Screener by email address.
 }
 ```
 
-> **Warning**: `reject` permanently blocks the sender. This cannot be undone via MCP.
+> **Note**: `reject` is reversible from the Hey UI (visit the contact page and toggle back). The MCP does not yet surface the re-approval path.
 
 ---
 
 ### hey_screen_by_id
 
-Approve or reject a first-time sender from the Screener by clearance ID.
+Approve or reject a first-time sender from the Screener by clearance ID. When approving, optionally route future emails to a non-Imbox destination. For senders that have already left the screener, use `hey_screen` by email instead — it falls back to the contact-page block.
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | clearance_id | string | **Yes** | - | The clearance ID from `hey_list_screener` |
-| action | string | **Yes** | - | `approve` to allow emails through, `reject` to permanently block (DESTRUCTIVE, irreversible) |
+| action | string | **Yes** | - | `approve` to allow emails through, `reject` to block future emails. Does not flag as spam. |
+| destination | string | No | `imbox` | When `action=approve`, the view future emails from this sender land in: `imbox` (default), `feed`, or `paper_trail`. Ignored when `action=reject`. |
 
 **Returns:**
 ```json
@@ -776,7 +802,7 @@ Approve or reject a first-time sender from the Screener by clearance ID.
 }
 ```
 
-> **Warning**: `reject` permanently blocks the sender. This cannot be undone via MCP.
+> **Note**: `reject` is reversible from the Hey UI (visit the contact page and toggle back). The MCP does not yet surface the re-approval path.
 
 ---
 

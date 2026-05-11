@@ -555,7 +555,7 @@ Mark an email as unread.
 
 #### POST /clearances/{id}
 
-Screen in (approve) or screen out (reject) a sender.
+Screen in (approve) or screen out (reject) a sender. When approving, optionally direct future emails to a non-default destination (Feed or Paper Trail).
 
 | Parameter | Type | Location | Description |
 |-----------|------|----------|-------------|
@@ -567,8 +567,38 @@ Screen in (approve) or screen out (reject) a sender.
 |-------|------|----------|-------------|
 | `_method` | string | Yes | `patch` |
 | `status` | string | Yes | `approved` (screen in) or `denied` (screen out) |
+| `designation_box_id` | string | No | Account-specific box ID. When omitted with `status=approved`, future emails land in Imbox (default). Set to the Feed or Paper Trail `box_id` to route there instead. Ignored when `status=denied`. |
+| `mark_topics_as_seen` | string | No | Set to `true` alongside `status=approved` to also clear any "New for you" dots from the new sender's existing threads. Used by the UI's "Screen in & Mark Seen" affordance. |
+| `reply_to_topic_id` | string | No | Topic ID. When set alongside `status=approved`, the UI opens the reply composer for that thread after approving. |
+
+> **Box IDs are account-specific** and must be discovered at runtime by reading the bulk-action forms on `/imbox` and matching `data-bulk-actions-target` (e.g. `feedboxButton`, `trailboxButton`) to the `box_id` query string in the form action. Same mechanism already used for `hey_move_to`.
 
 **Response:** 200 OK or redirect
+
+---
+
+#### POST /contacts/{contactId}/clearance
+
+Change the clearance status of a contact who already exists in your Hey account. Used by the contact page (`/contacts/{id}`) to toggle between "Screened Out" (block future emails without flagging existing ones as spam), "Imbox", "The Feed", and "Paper Trail" destinations.
+
+This is the surface for blocking an **already-approved** sender. For senders pending in the Screener (no contact yet), use `POST /clearances/{clearanceId}` instead.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `contactId` | string | path | Contact ID (`/contacts/{id}`, surfaced as `a[href]` on search results, thread sender names, and screener entries) |
+| `status` | string | query | `denied` (screen out) or `approved` (re-approve a previously screened-out contact) |
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `_method` | string | Yes | `put` (Rails method override; bare POST returns 404) |
+
+**Response:** 200 OK or redirect
+
+> **Resolving an email to a contactId**: `GET /search?q={email}` includes a contacts row with `a.action-group__action--contacts[href="/contacts/{id}"]` (per the search section above). The MCP's `findContactIdByEmail` reuses this parser.
+
+> **Destination toggle**: The contact page also exposes sibling forms for "Imbox", "The Feed", and "Paper Trail" delivery destinations. These post a `contact_id` field rather than the path-style endpoint above. Not yet surfaced via the MCP.
 
 ---
 
@@ -712,49 +742,53 @@ Un-ignore/unmute a thread.
 
 ### Thread Status
 
-#### POST /topics/{id}/status/trashed
+> **Breaking change (2026-05)**: Status endpoints moved from topic-based to entry-based. `POST /topics/{id}/status/*` now returns 404. Hey's UI fires the forms below; the MCP resolves a `topicId` to one of its `entryId`s by reading the thread page (`/topics/{id}`) and grepping the first `/entries/(\d+)/status/` form action.
 
-Move a thread to Trash.
+#### POST /entries/{entryId}/status/trashed
+
+Move a thread to Trash. Applied to any single entry within the thread; Hey propagates the status to the whole thread server-side.
 
 | Parameter | Type | Location | Description |
 |-----------|------|----------|-------------|
-| `id` | string | path | Topic/Thread ID |
+| `entryId` | string | path | Entry ID (any entry from the thread page) |
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `_method` | string | Yes | `put` |
 
 **Response:** 200 OK or redirect
 
 ---
 
-#### POST /topics/{id}/status/active
+#### POST /entries/{entryId}/status/active
 
-Restore a thread from Trash.
-
-| Parameter | Type | Location | Description |
-|-----------|------|----------|-------------|
-| `id` | string | path | Topic/Thread ID |
-
-**Response:** 200 OK or redirect
+Restore a thread from Trash. Same body shape as `trashed`.
 
 ---
 
-#### POST /topics/{id}/status/spam
+#### POST /entries/{entryId}/status/spam
 
-Mark a thread as Spam.
-
-| Parameter | Type | Location | Description |
-|-----------|------|----------|-------------|
-| `id` | string | path | Topic/Thread ID |
-
-**Response:** 200 OK or redirect
+Mark a thread as Spam (and block sender for future). Same body shape as `trashed`.
 
 ---
 
-#### POST /topics/{id}/status/ham
+#### POST /entries/{entryId}/status/ham
 
-Mark a thread as Not Spam (restore from spam).
+Mark a thread as Not Spam (restore from spam). Same body shape as `trashed`.
 
-| Parameter | Type | Location | Description |
-|-----------|------|----------|-------------|
-| `id` | string | path | Topic/Thread ID |
+---
+
+#### POST /postings/trash
+
+Trash one or more Paper Trail bundle items (postings with no thread). This is the only "destructive" action Hey's bundle UI exposes — spam/block is **not available** for bundles. The MCP falls back to this endpoint automatically when `hey_set_status(action=trash)` is called on a bundle ID.
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `posting_ids` | string | Yes | Comma-separated posting IDs |
 
 **Response:** 200 OK or redirect
 
@@ -769,6 +803,42 @@ Mark a thread as unseen/unread.
 | `id` | string | path | Topic/Thread ID |
 
 **Response:** 200 OK or redirect
+
+---
+
+### New for You ("Seen" / Observation)
+
+Hey shows newly-arrived emails at the top of the Imbox in a "New for you" tray, each with an orange unseen dot. Clicking an item in the UI fires `POST /postings/seen` for that posting; the "Mark all as seen" button fires `POST /boxes/{boxId}/observation` (loaded into a hidden Turbo Frame at `GET /boxes/{boxId}/observation/new`).
+
+This "seen" state is distinct from per-entry "read" state (`PUT/DELETE /entries/{id}/read`) and from the thread-level "unseen" toggle (`POST /topics/{id}/unseen`). Reading or organising a thread does **not** automatically clear the tray dot; only these two endpoints do.
+
+#### POST /postings/seen
+
+Clear the "New for you" dot for one or more postings.
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `posting_ids` | string | Yes | Posting ID(s), comma-separated for batch |
+
+**Response:** 200 OK or redirect
+
+---
+
+#### POST /boxes/{boxId}/observation
+
+Acknowledge every currently-new item in a box at once — equivalent to clicking "Mark all as seen" at the top of the Imbox's "New for you" tray. Creates a single Observation record; no per-posting body required.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `boxId` | string | path | Account-specific Imbox box ID (extract from `/imbox` page's `data-bulk-actions-target="imboxButton"` form action). |
+
+**Body:** none (just the CSRF header via `X-CSRF-Token`).
+
+**Response:** 200 OK or redirect
+
+> The UI uses a hidden Turbo Frame trick: `<form action="/boxes/{boxId}/observation/new" method="get">` loads a fragment into a hidden `<turbo-frame id="new_observation" target="_top">`, which then auto-submits as the POST above. Calling the POST directly skips the GET.
 
 ---
 
@@ -997,3 +1067,8 @@ When a session expires, requests return a 302 redirect to `/sign_in`. The mcp-he
 | 2026-05 | **BREAKING**: Label removal uses `POST /topics/{id}/filings/{filingId}` with `_method=delete`. Filing ID obtained from `/topics/{id}/filings` (Turbo Frame). Old `DELETE /topics/{id}/filings?folder_id={labelId}` returns 404 |
 | 2026-05 | Documented Hey.com entity model: Posting (list item), Topic (thread), Entry (single message) use different endpoint patterns |
 | 2026-05 | `/messages/{id}.text` requires entry/message ID, not topic ID. Added `resolveMessageId` to resolve topic IDs to message IDs via the topic page HTML |
+| 2026-05 | Documented `POST /clearances/{id}` optional `designation_box_id` field — routes approved senders' future emails into Feed or Paper Trail (omit for Imbox default). Also captured `mark_topics_as_seen` and `reply_to_topic_id` variants (not yet surfaced via MCP). |
+| 2026-05 | **BREAKING**: Status endpoints moved from `POST /topics/{id}/status/*` to `POST /entries/{entryId}/status/*` with `_method=put`. The topic-based paths now return 404. MCP `setTopicStatus` resolves the topic to one of its entries by reading `/topics/{id}` and grepping `/entries/(\d+)/status/` from the form actions. |
+| 2026-05 | Documented `POST /postings/trash` with `posting_ids` for trashing Paper Trail bundle items (the only destructive action bundles expose; spam/block is unavailable). MCP `hey_set_status(action=trash)` falls back to this when no entry can be resolved. |
+| 2026-05 | Documented "New for you" tray endpoints: `POST /postings/seen` with `posting_ids` (per-posting) and `POST /boxes/{boxId}/observation` (bulk for an entire box). Surfaced via new `hey_mark_seen` MCP tool (optional `posting_id` switches per-posting vs bulk). Distinct from per-entry read state and from the existing `POST /topics/{id}/unseen` toggle. |
+| 2026-05 | Documented `POST /contacts/{contactId}/clearance?status={approved|denied}` with `_method=put` — the contact-page surface for blocking an already-approved sender without flagging emails as spam. MCP `hey_screen(action=reject)` now falls back to this endpoint via `findContactIdByEmail` when the sender is not pending in the screener. |
