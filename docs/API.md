@@ -950,6 +950,7 @@ The compose page contains the sender selection dropdown, used to determine the u
 To extract account info:
 - **Sender ID**: Get `value` attribute from the selected `<option>`
 - **Sender Email**: Get text content from the selected `<option>`
+- **All self-aliases**: Iterate every `<option>` in the select. Each option text is one of the account's sender aliases. Reply-recipient resolution (`hey_reply`) must treat all of them as "self" — otherwise a thread whose latest prior message came from a secondary alias is mistaken for an external sender and the reply loops back to the user.
 
 > **Note**: Previous versions of Hey.com used separate `<input>` elements for `acting_sender_id` and `acting_sender_email`. The current structure uses a `<select>` dropdown where the email is in the option text.
 
@@ -1055,6 +1056,7 @@ When a session expires, requests return a 302 redirect to `/sign_in`. The mcp-he
 | 2026-05 | `/messages/{id}.text` requires entry/message ID, not topic ID. Added `resolveMessageId` to resolve topic IDs to message IDs via the topic page HTML |
 | 2026-05 | Documented `POST /clearances/{id}` optional `designation_box_id` field — routes approved senders' future emails into Feed or Paper Trail (omit for Imbox default). Also captured `mark_topics_as_seen` and `reply_to_topic_id` variants (not yet surfaced via MCP). |
 | 2026-05 | **BREAKING**: Status endpoints moved from `POST /topics/{id}/status/*` to `POST /entries/{entryId}/status/*` with `_method=put`. The topic-based paths now return 404. MCP `setTopicStatus` resolves the topic to one of its entries by reading `/topics/{id}` and grepping `/entries/(\d+)/status/` from the form actions. |
+| 2026-05-11 | Fix: `hey_reply` recipient resolution now treats every entry in the `acting_sender_id` dropdown as a self-alias, preventing replies from looping back to a user's secondary address when the latest prior thread message was sent from that alias. |
 | 2026-05 | Documented `POST /postings/trash` with `posting_ids` for trashing Paper Trail bundle items (the only destructive action bundles expose; spam/block is unavailable). MCP `hey_set_status(action=trash)` falls back to this when no entry can be resolved. |
 | 2026-05 | Documented "New for you" tray endpoints: `POST /postings/seen` with `posting_ids` (per-posting) and `POST /boxes/{boxId}/observation` (bulk for an entire box). Surfaced via new `hey_mark_seen` MCP tool (optional `posting_id` switches per-posting vs bulk). Distinct from per-entry read state and from the existing `POST /topics/{id}/unseen` toggle. |
 | 2026-05 | Documented `POST /contacts/{contactId}/clearance?status={approved|denied}` with `_method=put` — the contact-page surface for blocking an already-approved sender without flagging emails as spam. MCP `hey_screen(action=reject)` now falls back to this endpoint via `findContactIdByEmail` when the sender is not pending in the screener. |

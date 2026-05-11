@@ -356,7 +356,10 @@ describe("Thread reply recipient resolution", () => {
           date: "2026-04-30T11:00:00Z",
         },
       ]
-      const result = findLatestNonSelfSender(entries, "chris@example.com")
+      const result = findLatestNonSelfSender(
+        entries,
+        new Set(["chris@example.com"]),
+      )
       expect(result).toBe("amanda@example.com")
     })
 
@@ -376,8 +379,34 @@ describe("Thread reply recipient resolution", () => {
           date: "2026-04-29T09:00:00Z",
         },
       ]
-      const result = findLatestNonSelfSender(entries, "chris@example.com")
+      const result = findLatestNonSelfSender(
+        entries,
+        new Set(["chris@example.com"]),
+      )
       expect(result).toBe("amanda@example.com")
+    })
+
+    test("regression: multi-alias self — alias-as-latest sender is treated as self", () => {
+      // Production bug from thread 2011609499: Chris's account owns two
+      // aliases (`chris@sealjay.com` and `property@sealjay.com`). The latest
+      // prior entry was sent FROM the alias. The previous single-string self
+      // check missed it and addressed the reply back to Chris.
+      const entries: ThreadEntry[] = [
+        {
+          entryId: "1",
+          senderEmail: "elena@starckuberoi.co.uk",
+          date: "2026-05-10T12:00:00Z",
+        },
+        {
+          entryId: "2",
+          senderEmail: "property@sealjay.com",
+          date: "2026-05-10T16:35:00Z",
+        },
+      ]
+      const selves = new Set(["chris@sealjay.com", "property@sealjay.com"])
+      expect(findLatestNonSelfSender(entries, selves)).toBe(
+        "elena@starckuberoi.co.uk",
+      )
     })
 
     test("returns undefined when only the user has posted in the thread", () => {
@@ -389,11 +418,14 @@ describe("Thread reply recipient resolution", () => {
         },
       ]
       expect(
-        findLatestNonSelfSender(entries, "chris@example.com"),
+        findLatestNonSelfSender(entries, new Set(["chris@example.com"])),
       ).toBeUndefined()
     })
 
     test("is case-insensitive when comparing self email", () => {
+      // Helper lowercases each entry's sender on lookup; callers are
+      // expected to put lowercased values in the set (which
+      // getAccountInfo does).
       const entries: ThreadEntry[] = [
         {
           entryId: "1",
@@ -402,11 +434,14 @@ describe("Thread reply recipient resolution", () => {
         },
         {
           entryId: "2",
-          senderEmail: "chris@example.com",
+          senderEmail: "Chris@Example.com",
           date: "2026-04-30T10:00:00Z",
         },
       ]
-      const result = findLatestNonSelfSender(entries, "Chris@Example.com")
+      const result = findLatestNonSelfSender(
+        entries,
+        new Set(["chris@example.com"]),
+      )
       expect(result).toBe("amanda@example.com")
     })
 
@@ -420,7 +455,10 @@ describe("Thread reply recipient resolution", () => {
         { entryId: "2", senderEmail: "chris@example.com", date: undefined },
         { entryId: "3", senderEmail: "elena@law.example", date: undefined },
       ]
-      const result = findLatestNonSelfSender(entries, "chris@example.com")
+      const result = findLatestNonSelfSender(
+        entries,
+        new Set(["chris@example.com"]),
+      )
       // Last non-self entry in DOM order.
       expect(result).toBe("elena@law.example")
     })
@@ -438,7 +476,10 @@ describe("Thread reply recipient resolution", () => {
           date: "Yesterday at 10am", // not parseable
         },
       ]
-      const result = findLatestNonSelfSender(entries, "chris@example.com")
+      const result = findLatestNonSelfSender(
+        entries,
+        new Set(["chris@example.com"]),
+      )
       expect(result).toBe("amanda@example.com")
     })
   })
@@ -455,7 +496,7 @@ describe("Thread reply recipient resolution", () => {
       const result = resolveReplyRecipients({
         toOverride: ["someone-else@example.com"],
         replyContext: baseContext,
-        selfEmail: "chris@example.com",
+        selfEmails: new Set(["chris@example.com"]),
       })
       expect(result).toEqual(["someone-else@example.com"])
     })
@@ -464,7 +505,7 @@ describe("Thread reply recipient resolution", () => {
       const result = resolveReplyRecipients({
         toOverride: ["  alice@example.com  "],
         replyContext: baseContext,
-        selfEmail: "chris@example.com",
+        selfEmails: new Set(["chris@example.com"]),
       })
       expect(result).toEqual(["alice@example.com"])
     })
@@ -473,7 +514,7 @@ describe("Thread reply recipient resolution", () => {
       const result = resolveReplyRecipients({
         toOverride: undefined,
         replyContext: baseContext,
-        selfEmail: "chris@example.com",
+        selfEmails: new Set(["chris@example.com"]),
       })
       expect(result).toEqual(["amanda@example.com"])
     })
@@ -490,7 +531,7 @@ describe("Thread reply recipient resolution", () => {
             "chris@example.com",
           ],
         },
-        selfEmail: "chris@example.com",
+        selfEmails: new Set(["chris@example.com"]),
       })
       expect(result).toEqual(["amanda@example.com", "elena@law.example"])
     })
@@ -503,7 +544,7 @@ describe("Thread reply recipient resolution", () => {
           latestNonSelfSenderEmail: undefined,
           participantEmails: ["chris@example.com"],
         },
-        selfEmail: "chris@example.com",
+        selfEmails: new Set(["chris@example.com"]),
       })
       expect(result).toEqual([])
     })
@@ -512,7 +553,7 @@ describe("Thread reply recipient resolution", () => {
       const result = resolveReplyRecipients({
         toOverride: ["chase-target@example.com"],
         replyContext: baseContext,
-        selfEmail: "chris@example.com",
+        selfEmails: new Set(["chris@example.com"]),
       })
       expect(result).toEqual(["chase-target@example.com"])
     })
@@ -523,9 +564,30 @@ describe("Thread reply recipient resolution", () => {
       const result = resolveReplyRecipients({
         toOverride: [],
         replyContext: baseContext,
-        selfEmail: "chris@example.com",
+        selfEmails: new Set(["chris@example.com"]),
       })
       expect(result).toEqual(["amanda@example.com"])
+    })
+
+    test("regression: fallback filter excludes every self-alias", () => {
+      // Mirrors thread 2011609499: page-wide participant sweep returns both
+      // self-aliases plus the external recipient. The fallback path must
+      // strip both aliases so the reply lands on Elena.
+      const result = resolveReplyRecipients({
+        toOverride: undefined,
+        replyContext: {
+          entryId: "1",
+          subject: "Re: x",
+          participantEmails: [
+            "chris@sealjay.com",
+            "property@sealjay.com",
+            "elena@starckuberoi.co.uk",
+          ],
+          latestNonSelfSenderEmail: undefined,
+        },
+        selfEmails: new Set(["chris@sealjay.com", "property@sealjay.com"]),
+      })
+      expect(result).toEqual(["elena@starckuberoi.co.uk"])
     })
   })
 })

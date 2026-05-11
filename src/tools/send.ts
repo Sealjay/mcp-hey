@@ -67,6 +67,14 @@ export function classifyRedirect(response: Response): RedirectClassification {
 interface AccountInfo {
   senderId: string
   senderEmail: string
+  /**
+   * Every sender alias the account owns, lowercased. The active
+   * `senderEmail` is always present. Used so reply recipient resolution
+   * treats *all* of the user's addresses as "self" — otherwise a thread
+   * where the latest prior message came from an alias is mistaken for an
+   * external sender and the reply loops back to the user.
+   */
+  selfEmails: ReadonlySet<string>
 }
 
 // Cache account info per session (doesn't change)
@@ -104,7 +112,12 @@ async function getAccountInfo(): Promise<AccountInfo> {
   const root = parseHtml(composeHtml)
 
   // Primary: Parse select element (current Hey.com structure as of 2025-01)
-  // <select name="acting_sender_id"><option value="123" selected>email@example.com</option></select>
+  // <select name="acting_sender_id">
+  //   <option value="123" selected>primary@example.com</option>
+  //   <option value="456">alias@example.com</option>
+  // </select>
+  // Every option is one of the account's sender aliases; we keep the full
+  // set so reply recipient resolution can treat them all as "self".
   const senderSelect = root.querySelector("select[name='acting_sender_id']")
   if (senderSelect) {
     const selectedOption =
@@ -116,11 +129,21 @@ async function getAccountInfo(): Promise<AccountInfo> {
       const senderEmail = selectedOption.text.trim()
 
       if (senderId && senderEmail && isValidEmail(senderEmail)) {
+        const selfEmails = new Set<string>()
+        for (const option of senderSelect.querySelectorAll("option")) {
+          const optionEmail = option.text.trim()
+          if (optionEmail && isValidEmail(optionEmail)) {
+            selfEmails.add(optionEmail.toLowerCase())
+          }
+        }
+        selfEmails.add(senderEmail.toLowerCase())
+
         debugLog("Extracted account info from select", {
           senderId,
           senderEmail,
+          aliasCount: selfEmails.size,
         })
-        const accountInfo = { senderId, senderEmail }
+        const accountInfo = { senderId, senderEmail, selfEmails }
         accountInfoCache.value = accountInfo
         return accountInfo
       }
@@ -142,6 +165,7 @@ async function getAccountInfo(): Promise<AccountInfo> {
     const accountInfo = {
       senderId: legacySenderId,
       senderEmail: legacySenderEmail,
+      selfEmails: new Set([legacySenderEmail.toLowerCase()]),
     }
     accountInfoCache.value = accountInfo
     return accountInfo
@@ -160,7 +184,11 @@ async function getAccountInfo(): Promise<AccountInfo> {
       accountId,
       accountEmail,
     })
-    const accountInfo = { senderId: accountId, senderEmail: accountEmail }
+    const accountInfo = {
+      senderId: accountId,
+      senderEmail: accountEmail,
+      selfEmails: new Set([accountEmail.toLowerCase()]),
+    }
     accountInfoCache.value = accountInfo
     return accountInfo
   }
@@ -633,11 +661,10 @@ export function extractThreadEntries(
  */
 export function findLatestNonSelfSender(
   entries: ThreadEntry[],
-  selfEmail: string,
+  selfEmails: ReadonlySet<string>,
 ): string | undefined {
-  const selfLower = selfEmail.toLowerCase()
   const nonSelf = entries.filter(
-    (e) => e.senderEmail && e.senderEmail !== selfLower,
+    (e) => e.senderEmail && !selfEmails.has(e.senderEmail.toLowerCase()),
   )
   if (nonSelf.length === 0) {
     return undefined
@@ -678,9 +705,9 @@ export function findLatestNonSelfSender(
 export function resolveReplyRecipients(opts: {
   toOverride: string[] | undefined
   replyContext: ReplyContext
-  selfEmail: string
+  selfEmails: ReadonlySet<string>
 }): string[] {
-  const { toOverride, replyContext, selfEmail } = opts
+  const { toOverride, replyContext, selfEmails } = opts
 
   if (toOverride && toOverride.length > 0) {
     return toOverride.map((email) => email.trim())
@@ -690,9 +717,8 @@ export function resolveReplyRecipients(opts: {
     return [replyContext.latestNonSelfSenderEmail]
   }
 
-  const selfLower = selfEmail.toLowerCase()
   return replyContext.participantEmails.filter(
-    (email) => email.toLowerCase() !== selfLower,
+    (email) => !selfEmails.has(email.toLowerCase()),
   )
 }
 
@@ -701,7 +727,7 @@ export function resolveReplyRecipients(opts: {
  */
 async function getReplyContext(
   threadId: string,
-  selfEmail: string,
+  selfEmails: ReadonlySet<string>,
 ): Promise<ReplyContext> {
   const html = await heyClient.fetchHtml(`/topics/${threadId}`)
   const root = parseHtml(html)
@@ -748,7 +774,7 @@ async function getReplyContext(
   const threadEntries = extractThreadEntries(root)
   const latestNonSelfSenderEmail = findLatestNonSelfSender(
     threadEntries,
-    selfEmail,
+    selfEmails,
   )
 
   // Participant emails: union of every distinct sender we saw, plus a
@@ -822,10 +848,7 @@ export async function replyToEmail(params: ReplyParams): Promise<SendResult> {
     // Fetch account info first - we need the user's email to identify
     // which entries in the thread are theirs vs the other participants'.
     const accountInfo = await getAccountInfo()
-    const replyContext = await getReplyContext(
-      threadId,
-      accountInfo.senderEmail,
-    )
+    const replyContext = await getReplyContext(threadId, accountInfo.selfEmails)
 
     // Step 1: Create reply draft via POST to /entries/{entryId}/replies
     const draftFormData = new URLSearchParams()
@@ -904,7 +927,7 @@ export async function replyToEmail(params: ReplyParams): Promise<SendResult> {
     const recipientEmails = resolveReplyRecipients({
       toOverride,
       replyContext,
-      selfEmail: accountInfo.senderEmail,
+      selfEmails: accountInfo.selfEmails,
     })
 
     if (recipientEmails.length === 0) {
