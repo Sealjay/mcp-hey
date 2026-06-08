@@ -37,8 +37,8 @@ Our MCP tools should prefer **topic-based** endpoints for single-thread operatio
 ## Unread detection
 
 - Listing views mark unread (unseen) postings with a screen-reader marker `<span id="unseen_posting_{postingId}">`, **not** a `posting--unread` class (which no longer exists). A posting is unread iff that marker is present.
-- Do **not** trust `hey_imbox_summary` `newCount` or the "Nothing new for you." heading for unread counts — they can read 0 while unread mail exists.
-- Avoid `/imbox/unseen` ("Power Through New") for counting: it lazy-loads only a small batch and advancing through it marks messages seen (mutating). Count via the per-item marker on the regular paginated `/imbox` instead.
+- **New ("Power Through") count**: `GET /imbox/unseen` declares its size via `data-list-size-value` (no pagination). This is the source for `hey_imbox_summary`'s `newCount` — it can't be derived from the `/imbox` first page, which holds only the bubbled-up section. A plain **GET is read-only** (does not mark seen — count is stable across repeated GETs); only *advancing through* the messages marks them seen.
+- Two distinct metrics: the **new count** (`/imbox/unseen` size — small, current arrivals) vs. the **total never-opened backlog** (count of `unseen_posting_` markers across paginated `/imbox` — can be far larger). Don't conflate them.
 
 ## Per-tool ID type (canonical)
 

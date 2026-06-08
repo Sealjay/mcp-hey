@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { extractEmailsFromHtml } from "../tools/read"
+import { extractEmailsFromHtml, extractUnseenCount } from "../tools/read"
 
 // Hey marks an UNSEEN posting with a screen-reader marker element
 // `<span id="unseen_posting_{postingId}">`, NOT a `posting--unread` class
@@ -56,5 +56,35 @@ describe("Unread detection — unseen_posting marker", () => {
 </article>`
     const [email] = extractEmailsFromHtml(stale)
     expect(email.unread).toBe(false)
+  })
+})
+
+// Hey's "New for you" count comes from the /imbox/unseen ("Power Through New")
+// view, which declares its size via `data-list-size-value` and has no
+// pagination. The /imbox first page only holds the bubbled-up section, so the
+// new count cannot be derived from it.
+describe("New count — extractUnseenCount", () => {
+  test("reads the declared list size from the unseen view", () => {
+    const html = `<div class="inboxes" data-list-name-value="imbox"
+      data-list-size-value="8" data-list-unseen-size-value="8"></div>`
+    expect(extractUnseenCount(html)).toBe(8)
+  })
+
+  test("returns 0 when the unseen view is empty", () => {
+    const html = `<div class="inboxes" data-list-size-value="0"></div>`
+    expect(extractUnseenCount(html)).toBe(0)
+  })
+
+  test("falls back to counting entry blocks when the attribute is absent", () => {
+    const html = `<main>
+      <div class="entry__wrapper">a</div>
+      <div class="entry__wrapper">b</div>
+      <div class="entry__wrapper">c</div>
+    </main>`
+    expect(extractUnseenCount(html)).toBe(3)
+  })
+
+  test("returns 0 for markup with neither attribute nor entries", () => {
+    expect(extractUnseenCount("<div>nothing here</div>")).toBe(0)
   })
 })

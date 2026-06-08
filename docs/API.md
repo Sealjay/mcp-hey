@@ -234,9 +234,29 @@ screen-reader marker element inside its `article.posting` block:
 <span class="u-for-screen-reader" id="unseen_posting_<postingId>">Unseen</span>
 ```
 
-A posting is unread iff that marker is present; read postings omit it. Note that
-`hey_imbox_summary`'s `newCount` and the "Nothing new for you." UI heading can
-read 0 even when unread mail exists — rely on the per-item marker instead.
+A posting is unread iff that marker is present; read postings omit it. The
+per-item marker is the broad "never opened" signal — every accumulated unseen
+posting carries one.
+
+##### New ("Power Through") count vs. unread backlog
+
+Hey's *new* count (what the UI surfaces as "New for you" / "Power Through New")
+is **not** derivable from the `/imbox` first page — that page renders only the
+bubbled-up section. Fetch the dedicated view instead:
+
+```
+GET /imbox/unseen
+```
+
+It declares its size via `data-list-size-value` (no pagination), e.g.
+`data-list-size-value="8"`. A plain GET is **read-only** — it does not mark
+anything seen (verified: the count is stable across repeated GETs). Only
+*advancing through* the messages in that view marks them seen. `hey_imbox_summary`
+uses this view for `newCount`.
+
+This "new" count (small, current arrivals) is distinct from the total
+never-opened backlog counted via the per-item `unseen_posting_` marker, which can
+be far larger.
 
 #### GET /imbox
 
