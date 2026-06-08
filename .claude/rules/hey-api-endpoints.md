@@ -34,6 +34,12 @@ Our MCP tools should prefer **topic-based** endpoints for single-thread operatio
 - Document any new or changed endpoint in `docs/API.md` immediately, including a changelog entry
 - Add the tool to `docs/TOOLS.md` and `docs/hey-features-doc.md` — every tool in `src/index.ts` must appear in both
 
+## Unread detection
+
+- Listing views mark unread (unseen) postings with a screen-reader marker `<span id="unseen_posting_{postingId}">`, **not** a `posting--unread` class (which no longer exists). A posting is unread iff that marker is present.
+- Do **not** trust `hey_imbox_summary` `newCount` or the "Nothing new for you." heading for unread counts — they can read 0 while unread mail exists.
+- Avoid `/imbox/unseen` ("Power Through New") for counting: it lazy-loads only a small batch and advancing through it marks messages seen (mutating). Count via the per-item marker on the regular paginated `/imbox` instead.
+
 ## Per-tool ID type (canonical)
 
 When introducing or changing a tool, match its MCP param name to the ID type its Hey endpoint actually accepts. Mis-naming is a confidence game — the model picks the wrong field from list responses and we get 404s.

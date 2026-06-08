@@ -150,7 +150,9 @@ function extractAttachmentCount(entry: HTMLElement): number | undefined {
   return 1
 }
 
-function extractEmailsFromHtml(htmlOrRoot: string | HTMLElement): Email[] {
+export function extractEmailsFromHtml(
+  htmlOrRoot: string | HTMLElement,
+): Email[] {
   try {
     const root =
       typeof htmlOrRoot === "string" ? parseHtml(htmlOrRoot) : htmlOrRoot
@@ -255,9 +257,11 @@ function extractEmailsFromHtml(htmlOrRoot: string | HTMLElement): Email[] {
       const timeEl = entry.querySelector(".posting__time, time")
       const date = timeEl?.getAttribute("datetime") || timeEl?.text?.trim()
 
-      // Unread status from class
-      const classAttr = entry.getAttribute("class") || ""
-      const unread = classAttr.includes("posting--unread")
+      // Unread (unseen) status. Hey no longer exposes a `posting--unread`
+      // class; instead each unseen posting carries a screen-reader marker
+      // element `<span id="unseen_posting_{postingId}">`. Its presence is the
+      // reliable per-item unread signal (read postings omit it entirely).
+      const unread = entry.querySelector("[id^='unseen_posting_']") !== null
 
       // Bubbled up status from data attribute
       const bubbledUp = entry.getAttribute("data-bubbled-up") === "true"

@@ -224,6 +224,20 @@ quoted-printable) parts beneath the textual body. Calendar invites appear as
 
 ### Inbox Views
 
+#### Unread (unseen) detection
+
+Listing views do **not** flag unread items with a `posting--unread` class (that
+class no longer exists in Hey's markup). Each unseen posting instead carries a
+screen-reader marker element inside its `article.posting` block:
+
+```html
+<span class="u-for-screen-reader" id="unseen_posting_<postingId>">Unseen</span>
+```
+
+A posting is unread iff that marker is present; read postings omit it. Note that
+`hey_imbox_summary`'s `newCount` and the "Nothing new for you." UI heading can
+read 0 even when unread mail exists — rely on the per-item marker instead.
+
 #### GET /imbox
 
 List emails in the Imbox (important emails).
