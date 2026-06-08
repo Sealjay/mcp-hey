@@ -150,7 +150,9 @@ function extractAttachmentCount(entry: HTMLElement): number | undefined {
   return 1
 }
 
-function extractEmailsFromHtml(htmlOrRoot: string | HTMLElement): Email[] {
+export function extractEmailsFromHtml(
+  htmlOrRoot: string | HTMLElement,
+): Email[] {
   try {
     const root =
       typeof htmlOrRoot === "string" ? parseHtml(htmlOrRoot) : htmlOrRoot
@@ -672,6 +674,17 @@ function createNetworkMetadata(): CacheMetadata {
 }
 
 /**
+ * Hey.com paginates listings with an opaque, base64-encoded keyset cursor
+ * embedded in a `/?page=<token>` link — NOT an integer page number. Sending
+ * `?page=2` is silently ignored and returns the first page again. Extract the
+ * "next page" cursor href so callers can follow real pagination.
+ */
+export function extractNextCursor(html: string): string | null {
+  const match = html.match(/href="(\/\?page=[^"]+)"/)
+  return match ? match[1].replace(/&amp;/g, "&") : null
+}
+
+/**
  * Generic folder listing with cache support.
  */
 async function listFolder(
@@ -692,9 +705,15 @@ async function listFolder(
     }
   }
 
-  // Fetch from network
-  const fullPath = page > 1 ? `${path}?page=${page}` : path
-  const html = await heyClient.fetchHtml(fullPath)
+  // Fetch from network. Hey paginates via an opaque base64 cursor, so to reach
+  // page N we fetch the first page and follow the embedded "next" cursor N-1
+  // times. (The legacy `?page=<int>` is ignored by Hey and just repeats page 1.)
+  let html = await heyClient.fetchHtml(path)
+  for (let current = 1; current < page; current++) {
+    const next = extractNextCursor(html)
+    if (!next) break // no further pages
+    html = await heyClient.fetchHtml(next)
+  }
   const emails = extractEmailsFromHtml(html).slice(0, limit)
 
   // Update cache (only for first page)

@@ -224,13 +224,25 @@ quoted-printable) parts beneath the textual body. Calendar invites appear as
 
 ### Inbox Views
 
+#### Pagination
+
+Listing views (`/imbox`, `/feedbox`, `/paper_trail`, …) use **opaque base64 keyset cursors**, not integer page numbers. Sending `?page=2` is silently ignored — Hey returns the first page again.
+
+Each response embeds the next page's cursor as a link:
+
+```html
+<a href="/?page=<base64-token>" rel="next">…</a>
+```
+
+Decoded, the token looks like `{"page_number":2,"values":{"seen":"bubbled_up","observed_at":"<ts>","id":<id>}}`. To page through a view, follow the embedded `/?page=<token>` link from each response rather than incrementing a number. The first page typically returns ~30 rows; subsequent cursor pages ~10.
+
 #### GET /imbox
 
 List emails in the Imbox (important emails).
 
 | Parameter | Type | Location | Description |
 |-----------|------|----------|-------------|
-| `page` | number | query | Page number (optional) |
+| `page` | string | query | Opaque base64 keyset cursor for the next page (optional). See [Pagination](#pagination). |
 
 **Response:** HTML page with email list
 
@@ -242,7 +254,7 @@ List emails in The Feed (newsletters, notifications).
 
 | Parameter | Type | Location | Description |
 |-----------|------|----------|-------------|
-| `page` | number | query | Page number (optional) |
+| `page` | string | query | Opaque base64 keyset cursor for the next page (optional). See [Pagination](#pagination). |
 
 **Response:** HTML page with email list
 
@@ -254,7 +266,7 @@ List emails in Paper Trail (receipts, confirmations).
 
 | Parameter | Type | Location | Description |
 |-----------|------|----------|-------------|
-| `page` | number | query | Page number (optional) |
+| `page` | string | query | Opaque base64 keyset cursor for the next page (optional). See [Pagination](#pagination). |
 
 **Response:** HTML page with email list
 
