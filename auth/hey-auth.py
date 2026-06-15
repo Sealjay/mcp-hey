@@ -26,6 +26,8 @@ class HeyAuth:
         self.authenticated = False
         self.data_dir = Path(__file__).parent.parent / "data"
         self.cookies_path = self.data_dir / "hey-cookies.json"
+        self._extraction_started = False
+        self._lock = threading.Lock()
 
     def on_loaded(self):
         """Called when page finishes loading."""
@@ -38,91 +40,72 @@ class HeyAuth:
 
         print(f"Page loaded: {url}", file=sys.stderr)
 
-        # Skip auth pages - wait until we reach the actual app
         skip_pages = ["/sign_in", "/two_factor_authentication", "/session", "/verify", "/password"]
         if any(page in url for page in skip_pages):
             print("Waiting for authentication to complete...", file=sys.stderr)
             return
 
-        # Check if we've navigated to an authenticated page (imbox, feed, etc.)
         authenticated_pages = ["/imbox", "/feedbox", "/paper_trail", "/set_aside", "/reply_later", "/clearances"]
         is_authenticated_page = any(page in url for page in authenticated_pages) or (
             "app.hey.com" in url and not any(page in url for page in skip_pages)
         )
 
         if is_authenticated_page:
-            print("Authenticated page detected, extracting cookies...", file=sys.stderr)
-
-            # Try JavaScript first (works for non-HttpOnly cookies)
-            try:
-                cookies_js = self.window.evaluate_js("document.cookie")
-                if cookies_js:
-                    print(f"Got {len(cookies_js)} chars from document.cookie", file=sys.stderr)
-                    self.save_cookies(cookies_js, url)
-                    self.authenticated = True
-                    self.window.destroy()
+            with self._lock:
+                if self._extraction_started:
                     return
-            except Exception as e:
-                print(f"JS cookie extraction failed: {e}", file=sys.stderr)
+                self._extraction_started = True
+            print("Authenticated page detected, extracting cookies...", file=sys.stderr)
+            # Run extraction off the UI thread: get_cookies() blocks on a
+            # semaphore whose handler runs on the main thread, so calling it
+            # on the main thread deadlocks.
+            threading.Thread(target=self._extract_cookies, daemon=True).start()
 
-            # Fall back to native cookie extraction (gets HttpOnly cookies too)
-            self._try_shared_cookie_storage()
-
-    def _try_native_cookie_extraction(self):
-        """Fallback: extract cookies using macOS native APIs via pyobjc."""
+    def _extract_cookies(self):
+        """Extract cookies on a background thread, best method first."""
+        # 1. pywebview native API - returns HttpOnly cookies too.
         try:
-            print("Attempting native cookie extraction via pyobjc...", file=sys.stderr)
-
-            # Access the actual WKWebView from pywebview's window
-            if self.window is None:
-                print("No window available", file=sys.stderr)
+            print("Extracting cookies via get_cookies()...", file=sys.stderr)
+            raw = self.window.get_cookies()
+            cookies_list = []
+            for simple_cookie in raw or []:
+                for name, morsel in simple_cookie.items():
+                    domain = morsel["domain"] or "app.hey.com"
+                    if "hey.com" not in domain:
+                        continue
+                    cookies_list.append({
+                        "name": name,
+                        "value": morsel.value,
+                        "domain": domain,
+                        "path": morsel["path"] or "/",
+                    })
+            if cookies_list:
+                self._save_cookies_from_list(cookies_list)
+                self._finish()
                 return
-
-            # pywebview stores the native webview in window.webview on macOS
-            native_webview = getattr(self.window, '_webview', None)
-            if native_webview is None:
-                # Try alternate attribute names pywebview might use
-                for attr in ['webview', 'browser', '_browser']:
-                    native_webview = getattr(self.window, attr, None)
-                    if native_webview is not None:
-                        break
-
-            if native_webview is None:
-                print("Could not access native webview", file=sys.stderr)
-                self._try_shared_cookie_storage()
-                return
-
-            # Get the WKWebView's configuration and its website data store
-            config = native_webview.configuration()
-            data_store = config.websiteDataStore()
-            http_cookie_store = data_store.httpCookieStore()
-
-            def cookie_handler(cookies):
-                cookies_list = []
-                for cookie in cookies:
-                    domain = str(cookie.domain())
-                    if "hey.com" in domain:
-                        cookies_list.append({
-                            "name": str(cookie.name()),
-                            "value": str(cookie.value()),
-                            "domain": domain,
-                            "path": str(cookie.path()),
-                        })
-
-                if cookies_list:
-                    self._save_cookies_from_list(cookies_list)
-                    self.authenticated = True
-                    if self.window:
-                        self.window.destroy()
-                else:
-                    print("No Hey.com cookies found in webview", file=sys.stderr)
-                    self._try_shared_cookie_storage()
-
-            http_cookie_store.getAllCookies_(cookie_handler)
-
+            print("get_cookies() returned no Hey.com cookies", file=sys.stderr)
         except Exception as e:
-            print(f"Native cookie extraction failed: {e}", file=sys.stderr)
-            self._try_shared_cookie_storage()
+            print(f"get_cookies() failed: {e}", file=sys.stderr)
+
+        # 2. document.cookie - non-HttpOnly only, often blocked by CSP.
+        try:
+            cookies_js = self.window.evaluate_js("document.cookie")
+            if cookies_js:
+                print(f"Got {len(cookies_js)} chars from document.cookie", file=sys.stderr)
+                self.save_cookies(cookies_js, "")
+                self._finish()
+                return
+        except Exception as e:
+            print(f"JS cookie extraction failed: {e}", file=sys.stderr)
+
+        # 3. Shared system cookie store - last resort.
+        self._try_shared_cookie_storage()
+
+    def _finish(self):
+        """Mark success and close the window."""
+        self.authenticated = True
+        if self.window:
+            self.window.destroy()
 
     def _try_shared_cookie_storage(self):
         """Last resort: try NSHTTPCookieStorage (shared system cookies)."""
@@ -146,9 +129,7 @@ class HeyAuth:
 
             if cookies_list:
                 self._save_cookies_from_list(cookies_list)
-                self.authenticated = True
-                if self.window:
-                    self.window.destroy()
+                self._finish()
             else:
                 print("No Hey.com cookies found in shared storage either", file=sys.stderr)
 
@@ -161,11 +142,9 @@ class HeyAuth:
 
         session = {
             "cookies": cookies,
-            "lastValidated": int(__import__("time").time() * 1000),
+            "lastValidated": int(time.time() * 1000),
         }
 
-        # Atomic write: write to tmp, chmod, then rename to avoid a window
-        # where the file is world-readable.
         tmp_path = self.cookies_path.with_suffix(".tmp")
         with open(tmp_path, "w") as f:
             json.dump(session, f, indent=2)
@@ -175,11 +154,9 @@ class HeyAuth:
         print(f"Saved {len(cookies)} cookies to {self.cookies_path}", file=sys.stderr)
 
     def save_cookies(self, cookie_string: str, url: str):
-        """Parse cookie string and save to JSON file."""
-        # Ensure data directory exists
+        """Parse a document.cookie string and save to JSON file."""
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
-        # Parse cookies from document.cookie format
         cookies = []
         if cookie_string:
             for cookie_pair in cookie_string.split("; "):
@@ -194,11 +171,9 @@ class HeyAuth:
 
         session = {
             "cookies": cookies,
-            "lastValidated": int(__import__("time").time() * 1000),
+            "lastValidated": int(time.time() * 1000),
         }
 
-        # Atomic write: write to tmp, chmod, then rename to avoid a window
-        # where the file is world-readable.
         tmp_path = self.cookies_path.with_suffix(".tmp")
         with open(tmp_path, "w") as f:
             json.dump(session, f, indent=2)
@@ -208,7 +183,7 @@ class HeyAuth:
         print(f"Saved {len(cookies)} cookies to {self.cookies_path}", file=sys.stderr)
 
     def _poll_for_auth(self):
-        """Poll for authentication completion as fallback."""
+        """Poll for authentication completion as a fallback."""
         while not self.authenticated and self.window is not None:
             time.sleep(1)
             try:
@@ -216,7 +191,6 @@ class HeyAuth:
                     break
                 url = self.window.get_current_url()
                 if url:
-                    # Check if we're on an authenticated page
                     skip_pages = ["/sign_in", "/two_factor_authentication", "/session", "/verify", "/password"]
                     authenticated_pages = ["/imbox", "/feedbox", "/paper_trail", "/set_aside"]
 
@@ -242,12 +216,9 @@ class HeyAuth:
         )
         self.window.events.loaded += self.on_loaded
 
-        # Start a background thread to poll for auth as fallback
         poll_thread = threading.Thread(target=self._poll_for_auth, daemon=True)
         poll_thread.start()
 
-        # Start webview with private_mode=False to use persistent cookie storage
-        # This allows us to access cookies via NSHTTPCookieStorage
         webview.start(private_mode=False)
 
         return self.authenticated
