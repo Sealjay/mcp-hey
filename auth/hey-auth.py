@@ -65,36 +65,23 @@ class HeyAuth:
             except Exception as e:
                 print(f"JS cookie extraction failed: {e}", file=sys.stderr)
 
-            # Fall back to native cookie extraction (gets HttpOnly cookies too)
-            self._try_shared_cookie_storage()
+            # Fall back to native WKWebView cookie store (gets HttpOnly cookies too)
+            self._try_native_cookie_extraction()
 
     def _try_native_cookie_extraction(self):
-        """Fallback: extract cookies using macOS native APIs via pyobjc."""
+        """Extract cookies from the WKWebView's httpCookieStore via pyobjc.
+
+        This is the path that captures HttpOnly cookies (the Hey session token),
+        which document.cookie cannot read and which Hey's CSP blocks JS eval from
+        touching anyway. With private_mode=False, pywebview drives the *default*
+        WKWebsiteDataStore, so we read it directly rather than reaching into
+        pywebview internals."""
         try:
-            print("Attempting native cookie extraction via pyobjc...", file=sys.stderr)
+            print("Extracting cookies from WKWebsiteDataStore (httpCookieStore)...", file=sys.stderr)
 
-            # Access the actual WKWebView from pywebview's window
-            if self.window is None:
-                print("No window available", file=sys.stderr)
-                return
+            from WebKit import WKWebsiteDataStore
 
-            # pywebview stores the native webview in window.webview on macOS
-            native_webview = getattr(self.window, '_webview', None)
-            if native_webview is None:
-                # Try alternate attribute names pywebview might use
-                for attr in ['webview', 'browser', '_browser']:
-                    native_webview = getattr(self.window, attr, None)
-                    if native_webview is not None:
-                        break
-
-            if native_webview is None:
-                print("Could not access native webview", file=sys.stderr)
-                self._try_shared_cookie_storage()
-                return
-
-            # Get the WKWebView's configuration and its website data store
-            config = native_webview.configuration()
-            data_store = config.websiteDataStore()
+            data_store = WKWebsiteDataStore.defaultDataStore()
             http_cookie_store = data_store.httpCookieStore()
 
             def cookie_handler(cookies):
@@ -110,12 +97,13 @@ class HeyAuth:
                         })
 
                 if cookies_list:
+                    print(f"Found {len(cookies_list)} hey.com cookies in WKWebView store", file=sys.stderr)
                     self._save_cookies_from_list(cookies_list)
                     self.authenticated = True
                     if self.window:
                         self.window.destroy()
                 else:
-                    print("No Hey.com cookies found in webview", file=sys.stderr)
+                    print("No hey.com cookies in WKWebView store", file=sys.stderr)
                     self._try_shared_cookie_storage()
 
             http_cookie_store.getAllCookies_(cookie_handler)
