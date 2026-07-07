@@ -40,6 +40,12 @@ Our MCP tools should prefer **topic-based** endpoints for single-thread operatio
 - The next page's cursor is embedded in each response as a `<a href="/?page=<token>" rel="next">` link. Decoded, the token is `{"page_number":N,"values":{"seen":…,"observed_at":…,"id":…}}`.
 - To reach page N, fetch the view then follow the embedded `/?page=<token>` link N-1 times (`extractNextCursor` in `src/tools/read.ts`). First page ≈ 30 rows; cursor pages ≈ 10.
 
+## Unread detection
+
+- Listing views mark unread (unseen) postings with a screen-reader marker `<span id="unseen_posting_{postingId}">`, **not** a `posting--unread` class (which no longer exists). A posting is unread iff that marker is present.
+- **New ("Power Through") count**: `GET /imbox/unseen` declares its size via `data-list-size-value` (no pagination). This is the source for `hey_imbox_summary`'s `newCount` — it can't be derived from the `/imbox` first page, which holds only the bubbled-up section. A plain **GET is read-only** (does not mark seen — count is stable across repeated GETs); only *advancing through* the messages marks them seen.
+- Two distinct metrics: the **new count** (`/imbox/unseen` size — small, current arrivals) vs. the **total never-opened backlog** (count of `unseen_posting_` markers across paginated `/imbox` — can be far larger). Don't conflate them.
+
 ## Per-tool ID type (canonical)
 
 When introducing or changing a tool, match its MCP param name to the ID type its Hey endpoint actually accepts. Mis-naming is a confidence game — the model picks the wrong field from list responses and we get 404s.

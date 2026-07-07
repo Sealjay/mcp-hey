@@ -236,6 +236,40 @@ Each response embeds the next page's cursor as a link:
 
 Decoded, the token looks like `{"page_number":2,"values":{"seen":"bubbled_up","observed_at":"<ts>","id":<id>}}`. To page through a view, follow the embedded `/?page=<token>` link from each response rather than incrementing a number. The first page typically returns ~30 rows; subsequent cursor pages ~10.
 
+#### Unread (unseen) detection
+
+Listing views do **not** flag unread items with a `posting--unread` class (that
+class no longer exists in Hey's markup). Each unseen posting instead carries a
+screen-reader marker element inside its `article.posting` block:
+
+```html
+<span class="u-for-screen-reader" id="unseen_posting_<postingId>">Unseen</span>
+```
+
+A posting is unread iff that marker is present; read postings omit it. The
+per-item marker is the broad "never opened" signal — every accumulated unseen
+posting carries one.
+
+##### New ("Power Through") count vs. unread backlog
+
+Hey's *new* count (what the UI surfaces as "New for you" / "Power Through New")
+is **not** derivable from the `/imbox` first page — that page renders only the
+bubbled-up section. Fetch the dedicated view instead:
+
+```
+GET /imbox/unseen
+```
+
+It declares its size via `data-list-size-value` (no pagination), e.g.
+`data-list-size-value="8"`. A plain GET is **read-only** — it does not mark
+anything seen (verified: the count is stable across repeated GETs). Only
+*advancing through* the messages in that view marks them seen. `hey_imbox_summary`
+uses this view for `newCount`.
+
+This "new" count (small, current arrivals) is distinct from the total
+never-opened backlog counted via the per-item `unseen_posting_` marker, which can
+be far larger.
+
 #### GET /imbox
 
 List emails in the Imbox (important emails).

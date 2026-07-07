@@ -257,9 +257,11 @@ export function extractEmailsFromHtml(
       const timeEl = entry.querySelector(".posting__time, time")
       const date = timeEl?.getAttribute("datetime") || timeEl?.text?.trim()
 
-      // Unread status from class
-      const classAttr = entry.getAttribute("class") || ""
-      const unread = classAttr.includes("posting--unread")
+      // Unread (unseen) status. Hey no longer exposes a `posting--unread`
+      // class; instead each unseen posting carries a screen-reader marker
+      // element `<span id="unseen_posting_{postingId}">`. Its presence is the
+      // reliable per-item unread signal (read postings omit it entirely).
+      const unread = entry.querySelector("[id^='unseen_posting_']") !== null
 
       // Bubbled up status from data attribute
       const bubbledUp = entry.getAttribute("data-bubbled-up") === "true"
@@ -355,7 +357,27 @@ export function extractEmailsFromHtml(
   }
 }
 
-function extractImboxSummary(html: string): ImboxSummary {
+/**
+ * Hey's "New for you" (Power Through) count — what the UI calls *new*.
+ *
+ * The `/imbox` first page only renders the bubbled-up section, so the new/unseen
+ * tally is NOT derivable from it. Hey exposes the count on the dedicated
+ * `/imbox/unseen` ("Power Through New") view, which declares its size via
+ * `data-list-size-value` and has no pagination. A plain GET of that view is
+ * non-mutating (verified: the count is stable across repeated GETs); only
+ * advancing through the messages marks them seen.
+ *
+ * Note: this is Hey's *new* count, distinct from the total never-opened backlog
+ * (every posting carries an `unseen_posting_` marker — see extractEmailsFromHtml).
+ */
+export function extractUnseenCount(html: string): number {
+  const declared = html.match(/data-list-size-value="(\d+)"/)
+  if (declared) return Number.parseInt(declared[1], 10)
+  // Fallback: count rendered unseen entry blocks if the attribute is absent.
+  return parseHtml(html).querySelectorAll(".entry__wrapper").length
+}
+
+function extractImboxSummary(html: string, unseenCount = 0): ImboxSummary {
   const root = parseHtml(html)
   const emails = extractEmailsFromHtml(root)
 
@@ -382,14 +404,15 @@ function extractImboxSummary(html: string): ImboxSummary {
     }
   }
 
-  // Separate bubbled up emails from regular emails
+  // Separate bubbled up emails from regular emails. `newCount` comes from the
+  // /imbox/unseen view (passed in) — it can't be computed from the first imbox
+  // page, which contains only the bubbled-up section.
   const bubbledUpEmails = emails.filter((e) => e.bubbledUp)
-  const newEmails = emails.filter((e) => e.unread && !e.bubbledUp)
 
   return {
     screenerCount,
     bubbledUpCount: bubbledUpEmails.length,
-    newCount: newEmails.length,
+    newCount: unseenCount,
     emails,
     bubbledUpEmails,
   }
@@ -746,11 +769,17 @@ export async function getImboxSummary(
 ): Promise<CachedResult<ImboxSummary>> {
   const { forceRefresh = false } = options
 
-  // Check cache first (unless force refresh requested)
+  // Check cache first (unless force refresh requested). We need both the imbox
+  // page (bubbled-up + screener) and the /imbox/unseen page (new count); only
+  // serve from cache when both are fresh, otherwise refetch both.
   if (!forceRefresh) {
     const cachedHtml = getCachedFolderHtml("imbox")
-    if (cachedHtml) {
-      const summary = extractImboxSummary(cachedHtml.html)
+    const cachedUnseen = getCachedFolderHtml("imbox_unseen")
+    if (cachedHtml && cachedUnseen) {
+      const summary = extractImboxSummary(
+        cachedHtml.html,
+        extractUnseenCount(cachedUnseen.html),
+      )
       return {
         data: summary,
         _cache: cachedHtml.metadata,
@@ -758,13 +787,17 @@ export async function getImboxSummary(
     }
   }
 
-  // Fetch from network
-  const html = await heyClient.fetchHtml("/imbox")
-  const summary = extractImboxSummary(html)
+  // Fetch from network. The new count lives on /imbox/unseen, so fetch both in
+  // parallel (a GET of the unseen view is read-only — it does not mark seen).
+  const [html, unseenHtml] = await Promise.all([
+    heyClient.fetchHtml("/imbox"),
+    heyClient.fetchHtml("/imbox/unseen"),
+  ])
+  const summary = extractImboxSummary(html, extractUnseenCount(unseenHtml))
 
-  // Cache the HTML for future summary requests
+  // Cache both pages for future summary requests, plus the extracted messages.
   cacheFolderHtml("imbox", html)
-  // Also cache the extracted messages
+  cacheFolderHtml("imbox_unseen", unseenHtml)
   cacheMessages("imbox", summary.emails)
 
   return {
