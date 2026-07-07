@@ -13,7 +13,11 @@ import { AUTH_DIR, DATA_DIR } from "./paths"
  * absolute path before the subprocess is spawned).
  */
 export function resolvePython3(): string {
-  const knownPaths = ["/usr/bin/python3", "/usr/local/bin/python3"]
+  const knownPaths = [
+    "/usr/local/bin/python3",
+    "/opt/homebrew/bin/python3",
+    "/usr/bin/python3",
+  ]
   for (const p of knownPaths) {
     if (existsSync(p)) return p
   }

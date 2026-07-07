@@ -34,6 +34,12 @@ Our MCP tools should prefer **topic-based** endpoints for single-thread operatio
 - Document any new or changed endpoint in `docs/API.md` immediately, including a changelog entry
 - Add the tool to `docs/TOOLS.md` and `docs/hey-features-doc.md` — every tool in `src/index.ts` must appear in both
 
+## Pagination
+
+- Listing views (`/imbox`, `/feedbox`, `/paper_trail`, …) paginate with an **opaque base64 keyset cursor**, NOT an integer page number. `?page=2` is silently ignored and returns the first page again.
+- The next page's cursor is embedded in each response as a `<a href="/?page=<token>" rel="next">` link. Decoded, the token is `{"page_number":N,"values":{"seen":…,"observed_at":…,"id":…}}`.
+- To reach page N, fetch the view then follow the embedded `/?page=<token>` link N-1 times (`extractNextCursor` in `src/tools/read.ts`). First page ≈ 30 rows; cursor pages ≈ 10.
+
 ## Per-tool ID type (canonical)
 
 When introducing or changing a tool, match its MCP param name to the ID type its Hey endpoint actually accepts. Mis-naming is a confidence game — the model picks the wrong field from list responses and we get 404s.
