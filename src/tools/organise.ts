@@ -108,82 +108,68 @@ async function setTopicStatus(
   }
 }
 
-export async function setAside(id: string): Promise<OrganiseResult> {
+async function moveViaBoxOrFallback(
+  id: string,
+  boxKey: string,
+  cacheAction: CacheAction,
+  fallback: () => Promise<Response>,
+): Promise<OrganiseResult> {
   if (!id) {
     return { success: false, error: "ID is required" }
   }
 
   try {
-    const boxId = await getBoxId("asidebox")
+    const boxId = await getBoxId(boxKey)
     if (boxId) {
       const response = await withCsrfRetry(() =>
         heyClient.post(`/topics/${id}/moves?box_id=${boxId}`),
       )
       if (response.ok || response.status === 302) {
         return organiseResponseToResult(response, () =>
-          invalidateForAction("set_aside", id),
+          invalidateForAction(cacheAction, id),
         )
       }
     }
 
-    const response = await withCsrfRetry(() =>
-      tryEndpoints(
-        [
-          `/topics/${id}/set_aside`,
-          `/entries/${id}/set_aside`,
-          `/topics/${id}/status/set_aside`,
-        ],
-        async (endpoint) => {
-          const post = await heyClient.post(endpoint)
-          if (post.ok || post.status === 302) return post
-          return heyClient.put(endpoint)
-        },
-      ),
-    )
+    const response = await withCsrfRetry(fallback)
 
     return organiseResponseToResult(response, () =>
-      invalidateForAction("set_aside", id),
+      invalidateForAction(cacheAction, id),
     )
   } catch (err) {
     return { success: false, error: toUserError(err) }
   }
 }
 
-export async function replyLater(id: string): Promise<OrganiseResult> {
-  if (!id) {
-    return { success: false, error: "ID is required" }
-  }
-
-  try {
-    const boxId = await getBoxId("laterbox")
-    if (boxId) {
-      const response = await withCsrfRetry(() =>
-        heyClient.post(`/topics/${id}/moves?box_id=${boxId}`),
-      )
-      if (response.ok || response.status === 302) {
-        return organiseResponseToResult(response, () =>
-          invalidateForAction("reply_later", id),
-        )
-      }
-    }
-
-    const response = await withCsrfRetry(() =>
-      tryEndpoints(
-        [`/entries/${id}/reply_later`, `/topics/${id}/reply_later`],
-        (endpoint) => heyClient.put(endpoint),
-      ),
-    )
-
-    return organiseResponseToResult(response, () =>
-      invalidateForAction("reply_later", id),
-    )
-  } catch (err) {
-    return { success: false, error: toUserError(err) }
-  }
+export function setAside(id: string): Promise<OrganiseResult> {
+  return moveViaBoxOrFallback(id, "asidebox", "set_aside", () =>
+    tryEndpoints(
+      [
+        `/topics/${id}/set_aside`,
+        `/entries/${id}/set_aside`,
+        `/topics/${id}/status/set_aside`,
+      ],
+      async (endpoint) => {
+        const post = await heyClient.post(endpoint)
+        if (post.ok || post.status === 302) return post
+        return heyClient.put(endpoint)
+      },
+    ),
+  )
 }
 
-export async function removeFromSetAside(
+export function replyLater(id: string): Promise<OrganiseResult> {
+  return moveViaBoxOrFallback(id, "laterbox", "reply_later", () =>
+    tryEndpoints(
+      [`/entries/${id}/reply_later`, `/topics/${id}/reply_later`],
+      (endpoint) => heyClient.put(endpoint),
+    ),
+  )
+}
+
+async function moveToImbox(
   postingId: string,
+  cacheAction: CacheAction,
 ): Promise<OrganiseResult> {
   if (!postingId) {
     return { success: false, error: "Posting ID is required" }
@@ -207,43 +193,21 @@ export async function removeFromSetAside(
     )
 
     return organiseResponseToResult(response, () =>
-      invalidateForAction("set_aside", postingId),
+      invalidateForAction(cacheAction, postingId),
     )
   } catch (err) {
     return { success: false, error: toUserError(err) }
   }
 }
 
-export async function removeFromReplyLater(
+export function removeFromSetAside(postingId: string): Promise<OrganiseResult> {
+  return moveToImbox(postingId, "set_aside")
+}
+
+export function removeFromReplyLater(
   postingId: string,
 ): Promise<OrganiseResult> {
-  if (!postingId) {
-    return { success: false, error: "Posting ID is required" }
-  }
-
-  try {
-    const boxId = await getBoxId("imbox")
-    if (!boxId) {
-      return {
-        success: false,
-        error:
-          "Could not determine box_id. The page structure may have changed.",
-      }
-    }
-
-    const formData = new URLSearchParams()
-    formData.append("posting_ids", postingId)
-
-    const response = await withCsrfRetry(() =>
-      heyClient.post(`/postings/moves?box_id=${boxId}`, formData),
-    )
-
-    return organiseResponseToResult(response, () =>
-      invalidateForAction("reply_later", postingId),
-    )
-  } catch (err) {
-    return { success: false, error: toUserError(err) }
-  }
+  return moveToImbox(postingId, "reply_later")
 }
 
 export async function screenIn(

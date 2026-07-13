@@ -391,9 +391,10 @@ export class HeyClient {
   }
 
   /**
-   * Shared POST logic. Each public POST variant supplies its own header builder.
+   * Shared request logic. Each public verb variant supplies its own header builder.
    */
-  private async _post(
+  private async _request(
+    method: string,
     path: string,
     body: URLSearchParams | FormData | undefined,
     headersFn: (session: Session, token: string) => Record<string, string>,
@@ -410,7 +411,7 @@ export class HeyClient {
     }
 
     const response = await fetchWithRetry(url, {
-      method: "POST",
+      method,
       headers,
       body: body?.toString(),
       redirect: "manual",
@@ -424,7 +425,8 @@ export class HeyClient {
     body?: URLSearchParams | FormData,
     csrfToken?: string,
   ): Promise<Response> {
-    return this._post(
+    return this._request(
+      "POST",
       path,
       body,
       (session, token) => ({ ...getAjaxHeaders(session, token) }),
@@ -437,7 +439,8 @@ export class HeyClient {
     body?: URLSearchParams | FormData,
     csrfToken?: string,
   ): Promise<Response> {
-    return this._post(
+    return this._request(
+      "POST",
       path,
       body,
       (session, token) => ({
@@ -455,7 +458,8 @@ export class HeyClient {
     body?: URLSearchParams | FormData,
     csrfToken?: string,
   ): Promise<Response> {
-    return this._post(
+    return this._request(
+      "POST",
       path,
       body,
       (session, token) => ({
@@ -470,17 +474,13 @@ export class HeyClient {
   }
 
   async delete(path: string, csrfToken?: string): Promise<Response> {
-    const session = await this.ensureSession()
-    const token = csrfToken || (await this.getCsrfToken())
-    const url = `${BASE_URL}${path}`
-
-    const response = await fetchWithRetry(url, {
-      method: "DELETE",
-      headers: getAjaxHeaders(session, token),
-      redirect: "manual",
-    })
-
-    return this.handleResponse(response)
+    return this._request(
+      "DELETE",
+      path,
+      undefined,
+      (session, token) => getAjaxHeaders(session, token),
+      csrfToken,
+    )
   }
 
   async put(
@@ -488,26 +488,13 @@ export class HeyClient {
     body?: URLSearchParams | FormData,
     csrfToken?: string,
   ): Promise<Response> {
-    const session = await this.ensureSession()
-    const token = csrfToken || (await this.getCsrfToken())
-    const url = `${BASE_URL}${path}`
-
-    const headers: Record<string, string> = {
-      ...getAjaxHeaders(session, token),
-    }
-
-    if (body) {
-      headers["Content-Type"] = "application/x-www-form-urlencoded"
-    }
-
-    const response = await fetchWithRetry(url, {
-      method: "PUT",
-      headers,
-      body: body?.toString(),
-      redirect: "manual",
-    })
-
-    return this.handleResponse(response)
+    return this._request(
+      "PUT",
+      path,
+      body,
+      (session, token) => ({ ...getAjaxHeaders(session, token) }),
+      csrfToken,
+    )
   }
 }
 

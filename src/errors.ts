@@ -1,9 +1,4 @@
-export type HeyErrorCode =
-  | "auth_required"
-  | "rate_limited"
-  | "transient"
-  | "csrf_stale"
-  | "request_failed"
+export type HeyErrorCode = "rate_limited" | "transient" | "request_failed"
 
 export class HeyError extends Error {
   constructor(
@@ -17,9 +12,7 @@ export class HeyError extends Error {
 }
 
 export function toUserError(err: unknown): string {
-  if (err instanceof HeyError) return err.detail
-  if (err instanceof Error) return err.message
-  return "Unknown error"
+  return err instanceof Error ? err.message : "Unknown error"
 }
 
 /**

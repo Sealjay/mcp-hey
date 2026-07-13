@@ -94,20 +94,3 @@ describe("Organise Tools", () => {
     })
   })
 })
-
-describe("OrganiseResult Interface", () => {
-  test("should have correct success structure", () => {
-    interface OrganiseResult {
-      success: boolean
-      error?: string
-    }
-
-    const successResult: OrganiseResult = { success: true }
-    const errorResult: OrganiseResult = { success: false, error: "Test error" }
-
-    expect(successResult.success).toBe(true)
-    expect(successResult.error).toBeUndefined()
-    expect(errorResult.success).toBe(false)
-    expect(errorResult.error).toBe("Test error")
-  })
-})

@@ -2,7 +2,7 @@
 
 This document provides detailed documentation for all MCP tools provided by mcp-hey.
 
-**Total Tools: 34**
+**Total Tools: 37**
 
 ---
 
@@ -10,7 +10,7 @@ This document provides detailed documentation for all MCP tools provided by mcp-
 
 - [Reading Tools](#reading-tools) (12 tools)
 - [Search Tool](#search-tool) (1 tool)
-- [Sending Tools](#sending-tools) (3 tools)
+- [Sending Tools](#sending-tools) (6 tools)
 - [Organisation Tools](#organisation-tools) (17 tools)
 - [Cache Management](#cache-management) (1 tool)
 - [Error Handling](#error-handling)
@@ -163,8 +163,7 @@ List all labels/folders in Hey.com.
 [
   {
     "id": "12345",
-    "name": "Work",
-    "color": "blue"
+    "name": "Work"
   },
   {
     "id": "12346",
@@ -443,6 +442,76 @@ Forward an email to new recipients.
 ```
 
 > **Implementation**: Uses `POST /messages` with browser form headers. Fetches the original email's subject and body from the forward page, prepending any optional `body` text. Uses `entryId` (try `topicId` as fallback).
+
+---
+
+### hey_save_draft
+
+Save a new draft email without sending it. Recipients, subject, and body are all optional. Sending isn't available via MCP yet — finish and send from the Hey web/app UI, or keep revising with `hey_edit_draft`.
+
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| to | string[] | No | - | List of recipient email addresses |
+| cc | string[] | No | - | List of CC recipient email addresses |
+| subject | string | No | - | Email subject line |
+| body | string | No | - | Email body content (HTML supported) |
+
+**Returns:**
+```json
+{
+  "success": true,
+  "draftId": "2200205208"
+}
+```
+
+> **Implementation**: `POST /messages` with `entry[status]=drafted` and no `commit` field. Returns `204` with the new draft's ID in the `Location` header (`/messages/{id}`), unlike `hey_send_email` which returns a `302` redirect.
+
+---
+
+### hey_edit_draft
+
+Update an existing draft's recipients, subject, or body. Every field passed replaces the draft's current value outright — omit a field to leave it as Hey last saved it.
+
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| draft_id | string | **Yes** | - | The draft's message ID, from `hey_save_draft`'s `draftId` or `hey_list_emails(folder='drafts')` |
+| to | string[] | No | - | Replace the recipient list |
+| cc | string[] | No | - | Replace the CC list |
+| subject | string | No | - | Replace the subject line |
+| body | string | No | - | Replace the body content (HTML supported) |
+
+**Returns:**
+```json
+{
+  "success": true,
+  "draftId": "2200205208"
+}
+```
+
+> **Implementation**: `POST /messages/{draftId}` with `_method=patch`, Turbo Stream Accept header, and `entry[status]=drafted`. Previous field values are not recoverable once overwritten.
+
+---
+
+### hey_delete_draft
+
+Permanently delete a draft by ID. This does not move it to Trash — it is gone immediately, same as the trash icon in Hey's Drafts list. Irreversible.
+
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| draft_id | string | **Yes** | - | The draft's message ID, from `hey_save_draft`'s `draftId` or `hey_list_emails(folder='drafts')` |
+
+**Returns:**
+```json
+{
+  "success": true,
+  "draftId": "2200205208"
+}
+```
+
+> **Implementation**: `POST /entries/drafts/{draftId}` with `_method=delete` — a different URL shape from edit (`/entries/drafts/{id}`, not `/messages/{id}`).
 
 ---
 

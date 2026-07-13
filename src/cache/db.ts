@@ -295,15 +295,6 @@ export function runMaintenance(): void {
     )
     .run(now)
 
-  // Clean old sync queue entries
-  database
-    .query(
-      `DELETE FROM sync_queue
-     WHERE status = 'completed'
-       AND created_at < ?`,
-    )
-    .run(now - 86400) // 24 hours
-
   // Evict oldest messages if over limit (keep most recent)
   database
     .query(

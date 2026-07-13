@@ -3,7 +3,7 @@
  * Separates lightweight metadata from full content for fast queries.
  */
 
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 export const INIT_SCHEMA = `
 -- Pragma settings for optimal caching performance
@@ -32,26 +32,11 @@ CREATE TABLE IF NOT EXISTS messages (
     received_at INTEGER,
     has_attachments INTEGER DEFAULT 0,
     is_read INTEGER DEFAULT 0,
-    is_starred INTEGER DEFAULT 0,
 
     -- Cache management
     body_cached INTEGER DEFAULT 0,
     cached_at INTEGER NOT NULL,
-    etag TEXT,
-    sync_status TEXT DEFAULT 'synced',
     ttl_seconds INTEGER DEFAULT 86400
-);
-
--- Thread aggregation
-CREATE TABLE IF NOT EXISTS threads (
-    id TEXT PRIMARY KEY,
-    subject_base TEXT,
-    participant_emails TEXT,
-    message_count INTEGER DEFAULT 1,
-    unread_count INTEGER DEFAULT 0,
-    newest_date INTEGER,
-    oldest_date INTEGER,
-    cached_at INTEGER NOT NULL
 );
 
 -- Separate table for body content (lazy-loaded)
@@ -59,7 +44,6 @@ CREATE TABLE IF NOT EXISTS message_bodies (
     message_id TEXT PRIMARY KEY,
     body_text TEXT,
     body_html TEXT,
-    raw_headers TEXT,
     cached_at INTEGER NOT NULL,
     stale INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
@@ -72,8 +56,6 @@ CREATE TABLE IF NOT EXISTS attachments (
     filename TEXT,
     content_type TEXT,
     size INTEGER,
-    cached INTEGER DEFAULT 0,
-    cache_path TEXT,
     FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
 );
 
@@ -81,30 +63,8 @@ CREATE TABLE IF NOT EXISTS attachments (
 CREATE TABLE IF NOT EXISTS sync_state (
     folder TEXT PRIMARY KEY,
     last_sync_at INTEGER,
-    sync_cursor TEXT,
-    highest_id TEXT,
     message_count INTEGER,
     requires_full_sync INTEGER DEFAULT 0
-);
-
--- Sync queue for offline operations
-CREATE TABLE IF NOT EXISTS sync_queue (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    operation TEXT NOT NULL,
-    message_id TEXT NOT NULL,
-    payload TEXT,
-    created_at INTEGER NOT NULL,
-    retry_count INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'pending'
-);
-
--- Folder metadata cache
-CREATE TABLE IF NOT EXISTS folders (
-    name TEXT PRIMARY KEY,
-    display_name TEXT,
-    unread_count INTEGER DEFAULT 0,
-    total_count INTEGER DEFAULT 0,
-    cached_at INTEGER NOT NULL
 );
 
 -- Search results cache
@@ -129,9 +89,7 @@ CREATE TABLE IF NOT EXISTS folder_html (
 CREATE INDEX IF NOT EXISTS idx_messages_folder_date ON messages(folder, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id, received_at);
 CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_email);
-CREATE INDEX IF NOT EXISTS idx_messages_sync ON messages(sync_status) WHERE sync_status != 'synced';
 CREATE INDEX IF NOT EXISTS idx_messages_cached ON messages(cached_at);
-CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status, created_at);
 `
 
 export const FTS_SCHEMA = `
@@ -172,7 +130,5 @@ export const TTL_CONFIG = {
   message_metadata: 300, // 5 minutes
   folder_list: 300, // 5 minutes
   inbox_list: 120, // 2 minutes - needs frequent updates
-  unread_counts: 60, // 1 minute
   search_results: 60, // 1 minute - quickly stale after mutations
-  thread: 300, // 5 minutes
 } as const

@@ -427,6 +427,72 @@ Send a new email.
 
 ---
 
+### Draft Management
+
+Verified live against Hey.com 2026-07-12 via Chrome network capture, including a raw authenticated `fetch()` from the page console to isolate the exact field contract.
+
+#### POST /messages (create draft)
+
+Creates a new draft in one request — the same endpoint as sending, but with `entry[status]=drafted` and no `commit` field.
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `acting_sender_id` | string | Yes | Your Hey account ID |
+| `entry[addressed][directly][]` | string | No | Recipient email (repeat for multiple) — unlike sending, drafts may have zero recipients |
+| `entry[addressed][copied][]` | string | No | CC recipient email (repeat for multiple) |
+| `message[subject]` | string | No | Draft subject |
+| `message[content]` | string | No | Draft body (HTML supported) |
+| `entry[status]` | string | **Yes** | Must be `drafted` — this is what distinguishes a draft-create from a send. Omitting `entry[status]` and including `commit=Send email` instead sends immediately (see `POST /messages` above) |
+
+**Response:** `204 No Content` with a `Location: /messages/{draftId}` header containing the new draft's message ID. This is different from the send endpoint, which returns a `302` redirect.
+
+> **Important**: `redirect: "manual"` fetch semantics do not intercept this — 204 is not a redirect status, so the `Location` header is readable directly from the response.
+
+---
+
+#### POST /messages/{draftId} (edit draft)
+
+Updates an existing draft's fields. Same field contract as creation, plus the Rails method override.
+
+**Headers:** Turbo Stream Accept header, same as reply Step 2.
+
+```http
+Accept: text/vnd.turbo-stream.html, text/html, application/xhtml+xml
+X-CSRF-Token: [token]
+Origin: https://app.hey.com
+Referer: https://app.hey.com/imbox
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `_method` | string | **Yes** | Must be `patch` (Rails method override) |
+| `acting_sender_id` | string | Yes | Your Hey account ID |
+| `entry[addressed][directly][]` | string | No | Replaces the recipient list entirely (repeat for multiple) |
+| `entry[addressed][copied][]` | string | No | Replaces the CC list entirely |
+| `message[subject]` | string | No | Replaces the subject |
+| `message[content]` | string | No | Replaces the body |
+| `entry[status]` | string | **Yes** | Must be `drafted` |
+
+**Response:** `204 No Content`. This is the same URL pattern the UI uses for autosave (Hey's `autodraft` Stimulus controller fires this on every edit and on explicit "Save draft" clicks) — omitting `commit=Send email` keeps it a draft-only save.
+
+---
+
+#### POST /entries/drafts/{draftId} (delete draft)
+
+Permanently deletes a draft. Confirmed via the trash icon's form in the live Drafts list (`GET /entries/drafts`) — this is a different URL shape from edit (`/entries/drafts/{id}`, not `/messages/{id}`).
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `_method` | string | **Yes** | Must be `delete` (Rails method override) |
+
+**Response:** Redirect/success on the Drafts page; does not move the draft to Trash — it is gone immediately, with no restore path in the UI.
+
+---
+
 #### Replying to Emails (Two-Step Flow)
 
 Replying to an email in Hey.com is a **two-step process**: first create a draft, then send it via a PATCH request with Turbo Stream headers. A single POST to `/entries/{id}/replies` only creates a draft -- it does NOT send the reply.
@@ -1029,6 +1095,7 @@ Standard list views (Imbox, Feed, Paper Trail, Set Aside) use `article.posting`:
 | `/imbox`, `/feedbox`, `/paper_trail` | `article.posting` | Standard list view |
 | `/set_aside` | `article.bulk-actions__container.posting` | Has both classes |
 | `/reply_later` | `article.bulk-actions__container` | "Focus & Reply" view - **missing** `.posting` class |
+| `/entries/drafts` | `article.posting` (no `data-identifier`/`data-entry-id`) | No `/topics/` link either — the only ID-bearing link is `/messages/{id}/edit`. See ID Types below |
 | Imbox parking tray | `presentation` elements | Shows Reply Later + Set Aside at bottom of imbox |
 
 ### Parsing Emails
@@ -1051,6 +1118,7 @@ Key data attributes:
 | `postingId` | `data-identifier` attribute | `/postings/{id}/*` operations |
 | `topicId` | Link href `/topics/{id}` | `/topics/{id}/*` operations (trash, labels, etc.) |
 | `entryId` | URL fragment `#__entry_{id}` | `/entries/{id}/*` operations (set_aside, reply_later) |
+| (draft) `id` | Link href `/messages/{id}/edit` | `/messages/{id}` (edit/send) and `/entries/drafts/{id}` (delete) — used only as a last-resort fallback when no topic/entry/posting ID is present, which is always the case on `/entries/drafts` |
 
 ---
 
@@ -1107,3 +1175,5 @@ When a session expires, requests return a 302 redirect to `/sign_in`. The mcp-he
 | 2026-05 | Documented "New for you" tray endpoints: `POST /postings/seen` with `posting_ids` (per-posting) and `POST /boxes/{boxId}/observation` (bulk for an entire box). Surfaced via new `hey_mark_seen` MCP tool (optional `posting_id` switches per-posting vs bulk). Distinct from per-entry read state and from the existing `POST /topics/{id}/unseen` toggle. |
 | 2026-05 | Documented `POST /contacts/{contactId}/clearance?status={approved|denied}` with `_method=put` — the contact-page surface for blocking an already-approved sender without flagging emails as spam. MCP `hey_screen(action=reject)` now falls back to this endpoint via `findContactIdByEmail` when the sender is not pending in the screener. |
 | 2026-05-11 | **BREAKING (MCP)**: Bubble-up MCP tools (`hey_bubble_up`, `hey_bubble_up_if_no_reply`, `hey_pop_bubble`) renamed their `posting_id` parameter to `topic_id`. Empirically verified against the live Hey UI: every bubble-up form on `/topics/{id}/bubble_up/menu` posts to `/topics/{topicId}/bubble_up*` — passing a posting ID yields 404. Removed the `/postings/bubble_up?posting_ids[]=` fallback (it accepted a different ID type and masked the 404 signal). |
+| 2026-07-12 | Added draft management: `POST /messages` with `entry[status]=drafted` (no `commit`) creates a draft and returns its ID via the `Location` header on a `204`; `POST /messages/{id}` with `_method=patch` and `entry[status]=drafted` edits it; `POST /entries/drafts/{id}` with `_method=delete` removes it permanently (no trash/restore). Verified live via Chrome network capture and a raw authenticated `fetch()`. Surfaced via new `hey_save_draft`, `hey_edit_draft`, `hey_delete_draft` MCP tools. |
+| 2026-07-12 | **Fix**: `hey_list_emails(folder="drafts")` was silently returning zero results — `extractEmailsFromHtml` only recognised `/topics/{id}` links for ID extraction, but draft rows carry no `data-identifier`/`data-entry-id` and no `/topics/` link, only `/messages/{id}/edit`. Added a message-ID fallback so drafts are no longer dropped. |

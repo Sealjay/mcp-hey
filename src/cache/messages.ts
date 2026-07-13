@@ -465,7 +465,8 @@ export function invalidateForAction(
     | "collection"
     | "label"
     | "feed"
-    | "paper_trail",
+    | "paper_trail"
+    | "draft",
   messageId?: string,
 ): void {
   const now = unixNow()
@@ -582,6 +583,15 @@ export function invalidateForAction(
         "UPDATE sync_state SET requires_full_sync = 1 WHERE folder IN ('imbox', 'feed')",
       )
       break
+
+    case "draft":
+      if (messageId) {
+        execute("UPDATE messages SET cached_at = 0 WHERE id = ?", [messageId])
+      }
+      execute(
+        "UPDATE sync_state SET requires_full_sync = 1 WHERE folder = 'drafts'",
+      )
+      break
   }
 
   // Always invalidate search cache on mutations
@@ -619,6 +629,8 @@ export function invalidateForAction(
         return ["imbox", "paper_trail"]
       case "feed":
         return ["imbox", "feed"]
+      case "draft":
+        return ["drafts"]
       default:
         return ["imbox"]
     }

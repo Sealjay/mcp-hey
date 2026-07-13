@@ -4,6 +4,7 @@ import {
   type ReplyContext,
   type ThreadEntry,
   classifyRedirect,
+  extractDraftId,
   extractThreadEntries,
   findLatestNonSelfSender,
   resolveReplyRecipients,
@@ -66,6 +67,23 @@ describe("classifyRedirect", () => {
     const result = classifyRedirect(mockResponse(302))
     expect(result.type).toBe("success")
     expect(result.warning).toBeDefined()
+  })
+})
+
+describe("extractDraftId", () => {
+  test("should extract draft id from Location header", () => {
+    const id = extractDraftId(mockResponse(204, "/messages/2200205208"))
+    expect(id).toBe("2200205208")
+  })
+
+  test("should return undefined when Location header is missing", () => {
+    const id = extractDraftId(mockResponse(204))
+    expect(id).toBeUndefined()
+  })
+
+  test("should return undefined for a non-matching Location header", () => {
+    const id = extractDraftId(mockResponse(204, "/imbox"))
+    expect(id).toBeUndefined()
   })
 })
 
@@ -193,23 +211,69 @@ describe("Send Tools", () => {
       expect(result.error).toContain("also bad")
     })
   })
-})
 
-describe("SendResult Interface", () => {
-  test("should have correct success structure", () => {
-    interface SendResult {
-      success: boolean
-      messageId?: string
-      error?: string
-    }
+  describe("SaveDraftParams Validation", () => {
+    test("should reject too many total recipients", async () => {
+      const { saveDraft } = await import("../tools/send")
 
-    const successResult: SendResult = { success: true, messageId: "12345" }
-    const errorResult: SendResult = { success: false, error: "Test error" }
+      const to = Array.from({ length: 51 }, (_, i) => `user${i}@example.com`)
+      const result = await saveDraft({ to })
 
-    expect(successResult.success).toBe(true)
-    expect(successResult.messageId).toBe("12345")
-    expect(errorResult.success).toBe(false)
-    expect(errorResult.error).toBe("Test error")
+      expect(result.success).toBe(false)
+      expect(result.error).toContain("Too many recipients")
+    })
+
+    test("should reject malformed `to` addresses", async () => {
+      const { saveDraft } = await import("../tools/send")
+
+      const result = await saveDraft({ to: ["not-an-email"] })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain("Invalid recipient email(s)")
+    })
+
+    test("should reject malformed `cc` addresses", async () => {
+      const { saveDraft } = await import("../tools/send")
+
+      const result = await saveDraft({
+        to: ["alice@example.com"],
+        cc: ["also bad"],
+      })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain("Invalid CC email(s)")
+    })
+  })
+
+  describe("EditDraftParams Validation", () => {
+    test("should require draftId", async () => {
+      const { editDraft } = await import("../tools/send")
+
+      const result = await editDraft({ draftId: "", subject: "New subject" })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toBe("Draft ID is required")
+    })
+
+    test("should reject malformed `to` addresses", async () => {
+      const { editDraft } = await import("../tools/send")
+
+      const result = await editDraft({ draftId: "123", to: ["not-an-email"] })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain("Invalid recipient email(s)")
+    })
+  })
+
+  describe("deleteDraft Validation", () => {
+    test("should require draftId", async () => {
+      const { deleteDraft } = await import("../tools/send")
+
+      const result = await deleteDraft("")
+
+      expect(result.success).toBe(false)
+      expect(result.error).toBe("Draft ID is required")
+    })
   })
 })
 

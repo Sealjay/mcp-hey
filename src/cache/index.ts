@@ -27,12 +27,6 @@ export {
   updateReadStatus,
 } from "./messages"
 
-export {
-  ftsSearch,
-  getMessageCount,
-  getUnreadCount,
-  searchBySender,
-  searchBySubject,
-} from "./search"
+export { ftsSearch, getMessageCount, getUnreadCount } from "./search"
 
 export { TTL_CONFIG } from "./schema"

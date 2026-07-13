@@ -18,6 +18,10 @@ except ImportError:
     sys.exit(1)
 
 
+SKIP_PAGES = ["/sign_in", "/two_factor_authentication", "/session", "/verify", "/password"]
+AUTHENTICATED_PAGES = ["/imbox", "/feedbox", "/paper_trail", "/set_aside", "/reply_later", "/clearances"]
+
+
 class HeyAuth:
     """Handles Hey.com authentication via webview."""
 
@@ -28,6 +32,14 @@ class HeyAuth:
         self.cookies_path = self.data_dir / "hey-cookies.json"
         self._extraction_started = False
         self._lock = threading.Lock()
+
+    def _atomic_write_json(self, path, data):
+        """Atomically write JSON to a file with restricted permissions."""
+        tmp_path = path.with_suffix(".tmp")
+        with open(tmp_path, "w") as f:
+            json.dump(data, f, indent=2)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, path)
 
     def on_loaded(self):
         """Called when page finishes loading."""
@@ -40,14 +52,14 @@ class HeyAuth:
 
         print(f"Page loaded: {url}", file=sys.stderr)
 
-        skip_pages = ["/sign_in", "/two_factor_authentication", "/session", "/verify", "/password"]
-        if any(page in url for page in skip_pages):
+        # Skip auth pages - wait until we reach the actual app
+        if any(page in url for page in SKIP_PAGES):
             print("Waiting for authentication to complete...", file=sys.stderr)
             return
 
-        authenticated_pages = ["/imbox", "/feedbox", "/paper_trail", "/set_aside", "/reply_later", "/clearances"]
-        is_authenticated_page = any(page in url for page in authenticated_pages) or (
-            "app.hey.com" in url and not any(page in url for page in skip_pages)
+        # Check if we've navigated to an authenticated page (imbox, feed, etc.)
+        is_authenticated_page = any(page in url for page in AUTHENTICATED_PAGES) or (
+            "app.hey.com" in url and not any(page in url for page in SKIP_PAGES)
         )
 
         if is_authenticated_page:
@@ -145,11 +157,7 @@ class HeyAuth:
             "lastValidated": int(time.time() * 1000),
         }
 
-        tmp_path = self.cookies_path.with_suffix(".tmp")
-        with open(tmp_path, "w") as f:
-            json.dump(session, f, indent=2)
-        os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, self.cookies_path)
+        self._atomic_write_json(self.cookies_path, session)
 
         print(f"Saved {len(cookies)} cookies to {self.cookies_path}", file=sys.stderr)
 
@@ -174,11 +182,7 @@ class HeyAuth:
             "lastValidated": int(time.time() * 1000),
         }
 
-        tmp_path = self.cookies_path.with_suffix(".tmp")
-        with open(tmp_path, "w") as f:
-            json.dump(session, f, indent=2)
-        os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, self.cookies_path)
+        self._atomic_write_json(self.cookies_path, session)
 
         print(f"Saved {len(cookies)} cookies to {self.cookies_path}", file=sys.stderr)
 
@@ -191,14 +195,11 @@ class HeyAuth:
                     break
                 url = self.window.get_current_url()
                 if url:
-                    skip_pages = ["/sign_in", "/two_factor_authentication", "/session", "/verify", "/password"]
-                    authenticated_pages = ["/imbox", "/feedbox", "/paper_trail", "/set_aside"]
-
-                    if any(page in url for page in authenticated_pages):
+                    if any(page in url for page in AUTHENTICATED_PAGES):
                         print(f"Polling detected authenticated page: {url}", file=sys.stderr)
                         self.on_loaded()
                         break
-                    elif "app.hey.com" in url and not any(page in url for page in skip_pages):
+                    elif "app.hey.com" in url and not any(page in url for page in SKIP_PAGES):
                         print(f"Polling detected app page: {url}", file=sys.stderr)
                         self.on_loaded()
                         break

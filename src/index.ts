@@ -67,9 +67,12 @@ import {
   searchEmails,
 } from "./tools/read"
 import {
+  deleteDraft,
+  editDraft,
   forwardEmail,
   isValidEmail,
   replyToEmail,
+  saveDraft,
   sendEmail,
 } from "./tools/send"
 
@@ -163,6 +166,16 @@ function validateSavePath(value: unknown): string | null | undefined {
   return trimmed
 }
 
+/**
+ * Build a standard MCP error result with a single text content block.
+ */
+function errorResult(text: string): {
+  content: [{ type: "text"; text: string }]
+  isError: true
+} {
+  return { content: [{ type: "text", text }], isError: true }
+}
+
 // Tool definitions
 const tools: Tool[] = [
   // Reading tools
@@ -182,11 +195,12 @@ const tools: Tool[] = [
         },
         limit: {
           type: "number",
-          description: "Maximum number of emails to return (default: 25)",
+          description:
+            "Maximum number of emails to return, 1-100 (default: 25)",
         },
         page: {
           type: "number",
-          description: "Page number for pagination (default: 1)",
+          description: "Page number for pagination, 1-1000 (default: 1)",
         },
         force_refresh: {
           type: "boolean",
@@ -215,7 +229,7 @@ const tools: Tool[] = [
     name: "hey_list_set_aside",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "List emails in the Set Aside stack. Returns cached results unless force_refresh=true.",
+      "List emails currently in the Set Aside stack. Returns cached results (same shape as hey_list_emails) unless force_refresh=true. Use hey_unset_aside with the returned postingId to remove an item.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -230,7 +244,7 @@ const tools: Tool[] = [
     name: "hey_list_reply_later",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "List emails in the Reply Later stack. Returns cached results unless force_refresh=true.",
+      "List emails currently in the Reply Later stack. Returns cached results (same shape as hey_list_emails) unless force_refresh=true. Use hey_remove_reply_later with the returned postingId to remove an item.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -245,7 +259,7 @@ const tools: Tool[] = [
     name: "hey_list_screener",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "List emails waiting in the Screener. Returns cached results unless force_refresh=true.",
+      "List senders waiting in the Screener for approval. Returns cached results (same shape as hey_list_emails, plus clearanceId) unless force_refresh=true. Use hey_screen_by_id with the returned clearanceId to approve or reject.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -260,7 +274,7 @@ const tools: Tool[] = [
     name: "hey_list_labels",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "List all labels/folders in Hey.com. Returns array of {id, name, color?}. Use the id with hey_label or hey_list_label_emails.",
+      "List all labels/folders in Hey.com. Returns array of {id, name}. Use the id with hey_label or hey_list_label_emails.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -276,15 +290,17 @@ const tools: Tool[] = [
       properties: {
         label_id: {
           type: "string",
-          description: "The label/folder ID to list emails from",
+          description:
+            "The label ID to list emails from (use id from hey_list_labels)",
         },
         limit: {
           type: "number",
-          description: "Maximum number of emails to return (default: 25)",
+          description:
+            "Maximum number of emails to return, 1-100 (default: 25)",
         },
         page: {
           type: "number",
-          description: "Page number for pagination (default: 1)",
+          description: "Page number for pagination, 1-1000 (default: 1)",
         },
         force_refresh: {
           type: "boolean",
@@ -314,15 +330,17 @@ const tools: Tool[] = [
       properties: {
         collection_id: {
           type: "string",
-          description: "The collection ID to list emails from",
+          description:
+            "The collection ID to list emails from (use id from hey_list_collections)",
         },
         limit: {
           type: "number",
-          description: "Maximum number of emails to return (default: 25)",
+          description:
+            "Maximum number of emails to return, 1-100 (default: 25)",
         },
         page: {
           type: "number",
-          description: "Page number for pagination (default: 1)",
+          description: "Page number for pagination, 1-1000 (default: 1)",
         },
         force_refresh: {
           type: "boolean",
@@ -341,7 +359,7 @@ const tools: Tool[] = [
       openWorldHint: true,
     },
     description:
-      "Add or remove a label on an email thread. Returns {success, error?}. Use hey_list_labels to discover available label IDs.",
+      "Add or remove a label on an email thread. Returns {success, error?}. Reversible by calling again with the opposite action. Use hey_list_labels to discover available label IDs.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -372,7 +390,7 @@ const tools: Tool[] = [
       openWorldHint: true,
     },
     description:
-      "Add or remove an email thread from a collection. Returns {success, error?}. Use hey_list_collections to discover collection IDs.",
+      "Add or remove an email thread from a collection. Returns {success, error?}. Reversible by calling again with the opposite action. Use hey_list_collections to discover collection IDs.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -444,7 +462,7 @@ const tools: Tool[] = [
         attachment_id: {
           type: "string",
           description:
-            "The attachment ID from hey_read_email's attachments array (e.g. 'part-1')",
+            "The attachment ID from hey_read_email's attachments array (format: part-N, e.g. 'part-1')",
         },
         save_path: {
           type: "string",
@@ -487,11 +505,11 @@ const tools: Tool[] = [
       properties: {
         query: {
           type: "string",
-          description: "Search query",
+          description: "Search query text, 1-500 characters after trimming.",
         },
         limit: {
           type: "number",
-          description: "Maximum number of results (default: 25)",
+          description: "Maximum number of results, 1-100 (default: 25)",
         },
         force_refresh: {
           type: "boolean",
@@ -547,7 +565,7 @@ const tools: Tool[] = [
       openWorldHint: true,
     },
     description:
-      "Reply to an email thread. By default the reply goes to the other thread participants (your own address is automatically excluded). Prefer this over hey_send_email any time you're responding to an existing thread — it preserves threading on both ends. Pass `to` to redirect the reply to specific recipients: useful for chasing your own threads (where the default would loop back to you), for redirecting away from a mailing-list address onto a specific person, or for any case where you want the response to land somewhere other than the default participants. Use hey_send_email only for genuinely new conversations.",
+      "Reply to an email thread, preserving threading on both ends. Returns {success, error?}. By default the reply goes to the other thread participants (your own address is automatically excluded); pass `to` to redirect to specific recipients — e.g. chasing your own thread without looping back to yourself, or redirecting off a mailing-list address. Prefer this over hey_send_email when responding to an existing thread; use hey_send_email only for new conversations.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -617,6 +635,102 @@ const tools: Tool[] = [
       required: ["entry_id", "to"],
     },
   },
+  {
+    name: "hey_save_draft",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    description:
+      "Save a new draft email without sending it. Creates an entry in Hey's Drafts folder; recipients, subject, and body are all optional so a partially-written draft can be saved. Returns {success, draftId?, error?}. Sending isn't available via MCP yet — finish and send the draft from the Hey web/app UI, or use hey_edit_draft to keep revising it. Use hey_send_email/hey_reply instead when you want to send immediately rather than draft first.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        to: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional list of recipient email addresses",
+        },
+        cc: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional list of CC recipient email addresses",
+        },
+        subject: {
+          type: "string",
+          description: "Optional email subject line",
+        },
+        body: {
+          type: "string",
+          description: "Optional email body content (HTML supported)",
+        },
+      },
+    },
+  },
+  {
+    name: "hey_edit_draft",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Update an existing draft's recipients, subject, or body. Every field you pass replaces the draft's current value outright (no merging) — omit a field to leave it as Hey last saved it. Returns {success, draftId, error?}. Previous field values are not recoverable once overwritten, so re-fetch via hey_list_emails(folder='drafts') first if you need to preserve them. Use hey_save_draft to create a draft before calling this, and hey_delete_draft to remove one instead of blanking it out.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        draft_id: {
+          type: "string",
+          description:
+            "The draft's message ID, from hey_save_draft's draftId or hey_list_emails(folder='drafts')",
+        },
+        to: {
+          type: "array",
+          items: { type: "string" },
+          description: "Replace the recipient list with these addresses",
+        },
+        cc: {
+          type: "array",
+          items: { type: "string" },
+          description: "Replace the CC list with these addresses",
+        },
+        subject: {
+          type: "string",
+          description: "Replace the subject line",
+        },
+        body: {
+          type: "string",
+          description: "Replace the body content (HTML supported)",
+        },
+      },
+      required: ["draft_id"],
+    },
+  },
+  {
+    name: "hey_delete_draft",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Permanently delete a draft by ID. This does not move it to Trash — it is gone immediately, same as the trash icon in Hey's Drafts list. Returns {success, draftId, error?}. Irreversible; there is no hey_restore_draft. Use hey_list_emails(folder='drafts') first if you don't already have the draftId from hey_save_draft or hey_edit_draft.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        draft_id: {
+          type: "string",
+          description:
+            "The draft's message ID, from hey_save_draft's draftId or hey_list_emails(folder='drafts')",
+        },
+      },
+      required: ["draft_id"],
+    },
+  },
 
   // Organisation tools
   {
@@ -628,7 +742,7 @@ const tools: Tool[] = [
       openWorldHint: true,
     },
     description:
-      "Move an email thread to Set Aside for later. Reversible via hey_unset_aside (requires postingId from hey_list_set_aside). Returns {success, error?}. Use for emails you plan to revisit but want out of the Imbox. Does not affect future emails from the sender.",
+      "Move an email thread to Set Aside for later. Reversible via hey_unset_aside (requires postingId from hey_list_set_aside). Returns {success, error?}. Use for emails you plan to revisit but don't need to reply to — for emails needing a reply, use hey_reply_later instead. Does not affect future emails from the sender.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -650,7 +764,7 @@ const tools: Tool[] = [
       openWorldHint: true,
     },
     description:
-      "Move an email thread to Reply Later. Reversible via hey_remove_reply_later (requires postingId from hey_list_reply_later). Returns {success, error?}. Use for emails you intend to respond to but not right now.",
+      "Move an email thread to Reply Later. Reversible via hey_remove_reply_later (requires postingId from hey_list_reply_later). Returns {success, error?}. Use for emails you intend to respond to but not right now — if no reply is planned, use hey_set_aside instead.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -672,7 +786,7 @@ const tools: Tool[] = [
       openWorldHint: true,
     },
     description:
-      "Remove an email from Set Aside (move it back to the Imbox or its original location). Requires the posting_id from hey_list_set_aside.",
+      "Remove an email from Set Aside, moving it back to the Imbox or its original location. Returns {success, error?}. Requires the posting_id from hey_list_set_aside. Reversible by calling hey_set_aside again with the thread's topic_id.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -694,7 +808,7 @@ const tools: Tool[] = [
       openWorldHint: true,
     },
     description:
-      'Remove an email from Reply Later (mark as "Done", moving it back to the Imbox). Requires the posting_id from hey_list_reply_later.',
+      'Remove an email from Reply Later, marking it "Done" and moving it back to the Imbox. Returns {success, error?}. Requires the posting_id from hey_list_reply_later. Reversible by calling hey_reply_later again with the thread\'s topic_id.',
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -728,7 +842,7 @@ const tools: Tool[] = [
           type: "string",
           enum: ["approve", "reject"],
           description:
-            "approve: allow this sender's emails through (routed to `destination`). reject: block future emails from this sender. Does not flag as spam, does not move existing emails. Reversible via the Hey UI's contact page.",
+            "approve routes to `destination`; reject blocks future emails and does not affect existing mail.",
         },
         destination: {
           type: "string",
@@ -761,7 +875,7 @@ const tools: Tool[] = [
           type: "string",
           enum: ["approve", "reject"],
           description:
-            "approve: allow this sender's emails through (routed to `destination`). reject: block future emails from this sender. Does not flag as spam.",
+            "approve routes to `destination`; reject blocks future emails and does not flag as spam.",
         },
         destination: {
           type: "string",
@@ -1021,14 +1135,15 @@ const tools: Tool[] = [
     name: "hey_cache_status",
     annotations: { readOnlyHint: true, openWorldHint: false },
     description:
-      "Get cache statistics including message counts, cache age, and storage estimate. Read-only with no side effects. Optionally query a specific folder for message/unread counts. Use before force_refresh decisions.",
+      "Get local cache statistics: message counts, cache age, and storage estimate. Read-only with no side effects. Pass `folder` to scope message/unread counts to one cached view. Use before deciding whether to pass force_refresh on other list tools.",
     inputSchema: {
       type: "object" as const,
       properties: {
         folder: {
           type: "string",
           enum: ["imbox", "feed", "paper_trail", "set_aside", "reply_later"],
-          description: "Optional folder to get specific stats for",
+          description:
+            "Optional: scope stats to one cached view (imbox, feed, paper_trail, set_aside, reply_later). Note this differs from hey_list_emails' folder enum — trash, spam, and drafts aren't cache-tracked and silently return 0 here.",
         },
       },
     },
@@ -1073,15 +1188,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           "drafts",
         ]
         if (!folder || !validFolders.includes(folder)) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: folder is required and must be one of: imbox, feed, paper_trail, trash, spam, drafts",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: folder is required and must be one of: imbox, feed, paper_trail, trash, spam, drafts",
+          )
         }
         const limit = clampNumber(args?.limit, 25, 1, 100)
         const page = clampNumber(args?.page, 1, 1, 1000)
@@ -1135,15 +1244,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const page = clampNumber(args?.page, 1, 1, 1000)
         const forceRefresh = (args?.force_refresh as boolean) ?? false
         if (!labelId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: label_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: label_id is required and must be valid")
         }
         result = await listLabelEmails(labelId, { limit, page, forceRefresh })
         break
@@ -1158,15 +1259,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const page = clampNumber(args?.page, 1, 1, 1000)
         const forceRefresh = (args?.force_refresh as boolean) ?? false
         if (!collectionId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: collection_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: collection_id is required and must be valid",
+          )
         }
         result = await listCollectionEmails(collectionId, {
           limit,
@@ -1180,37 +1275,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const labelId = validateId(args?.label_id)
         const action = args?.action as string
         if (!topicId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: topic_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: topic_id is required and must be valid")
         }
         if (!labelId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: label_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: label_id is required and must be valid")
         }
         if (!action || !["add", "remove"].includes(action)) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: action is required (add or remove)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: action is required (add or remove)")
         }
         result =
           action === "add"
@@ -1223,37 +1294,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const collectionId = validateId(args?.collection_id)
         const action = args?.action as string
         if (!topicId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: topic_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: topic_id is required and must be valid")
         }
         if (!collectionId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: collection_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: collection_id is required and must be valid",
+          )
         }
         if (!action || !["add", "remove"].includes(action)) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: action is required (add or remove)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: action is required (add or remove)")
         }
         result =
           action === "add"
@@ -1269,12 +1318,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ? Math.max(1, Math.min(100, Number(args.max_entries)))
           : undefined
         if (!id) {
-          return {
-            content: [
-              { type: "text", text: "Error: id is required and must be valid" },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: id is required and must be valid")
         }
         result = await readEmail(id, { format, forceRefresh, maxEntries })
         break
@@ -1284,37 +1328,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const attachmentId = validateAttachmentId(args?.attachment_id)
         const savePath = validateSavePath(args?.save_path)
         if (!emailId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: email_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: email_id is required and must be valid")
         }
         if (!attachmentId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: attachment_id is required (e.g. 'part-1' from hey_read_email)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: attachment_id is required (e.g. 'part-1' from hey_read_email)",
+          )
         }
         if (savePath === null) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: save_path must be a non-empty string under 1024 chars",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: save_path must be a non-empty string under 1024 chars",
+          )
         }
         result = await downloadAttachment({
           emailId,
@@ -1331,26 +1355,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             ? undefined
             : validateAttachmentId(attachmentIdRaw)
         if (!emailId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: email_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: email_id is required and must be valid")
         }
         if (attachmentIdRaw !== undefined && !attachmentId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: attachment_id must be a valid id (e.g. 'part-1')",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: attachment_id must be a valid id (e.g. 'part-1')",
+          )
         }
         result = await getCalendarInvite({
           emailId,
@@ -1363,15 +1373,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const limit = clampNumber(args?.limit, 25, 1, 100)
         const forceRefresh = (args?.force_refresh as boolean) ?? false
         if (!query) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: query is required (1-500 characters)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: query is required (1-500 characters)")
         }
         result = await searchEmails(query, { limit, forceRefresh })
         break
@@ -1385,15 +1387,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const cc = args?.cc as string[] | undefined
 
         if (!to || !subject || !body) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: to, subject, and body are required",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: to, subject, and body are required")
         }
         result = await sendEmail({ to, subject, body, cc })
         break
@@ -1405,48 +1399,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const cc = args?.cc as unknown
 
         if (!threadId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: thread_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: thread_id is required and must be valid")
         }
         if (!body || typeof body !== "string" || body.trim().length === 0) {
-          return {
-            content: [{ type: "text", text: "Error: body is required" }],
-            isError: true,
-          }
+          return errorResult("Error: body is required")
         }
 
         if (to !== undefined) {
           if (!Array.isArray(to) || !to.every((e) => typeof e === "string")) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "Error: to must be an array of email address strings",
-                },
-              ],
-              isError: true,
-            }
+            return errorResult(
+              "Error: to must be an array of email address strings",
+            )
           }
         }
 
         if (cc !== undefined) {
           if (!Array.isArray(cc) || !cc.every((e) => typeof e === "string")) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "Error: cc must be an array of email address strings",
-                },
-              ],
-              isError: true,
-            }
+            return errorResult(
+              "Error: cc must be an array of email address strings",
+            )
           }
         }
 
@@ -1467,26 +1438,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const body = args?.body as string | undefined
 
         if (!entryId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: entry_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: entry_id is required and must be valid")
         }
         if (!to || !Array.isArray(to) || to.length === 0) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: to is required and must be a non-empty array of email addresses",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: to is required and must be a non-empty array of email addresses",
+          )
         }
         result = await forwardEmail({
           entryId,
@@ -1498,19 +1455,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break
       }
 
+      case "hey_save_draft": {
+        const to = args?.to as string[] | undefined
+        const cc = args?.cc as string[] | undefined
+        const subject = args?.subject as string | undefined
+        const body = args?.body as string | undefined
+
+        result = await saveDraft({ to, cc, subject, body })
+        break
+      }
+
+      case "hey_edit_draft": {
+        const draftId = validateId(args?.draft_id)
+        const to = args?.to as string[] | undefined
+        const cc = args?.cc as string[] | undefined
+        const subject = args?.subject as string | undefined
+        const body = args?.body as string | undefined
+
+        if (!draftId) {
+          return errorResult("Error: draft_id is required and must be valid")
+        }
+        result = await editDraft({ draftId, to, cc, subject, body })
+        break
+      }
+
+      case "hey_delete_draft": {
+        const draftId = validateId(args?.draft_id)
+        if (!draftId) {
+          return errorResult("Error: draft_id is required and must be valid")
+        }
+        result = await deleteDraft(draftId)
+        break
+      }
+
       // Organisation tools
       case "hey_set_aside": {
         const id = validateId(args?.id)
         if (!id) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: id is required and must be valid (use topicId from list operations)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: id is required and must be valid (use topicId from list operations)",
+          )
         }
         result = await setAside(id)
         break
@@ -1518,15 +1502,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "hey_reply_later": {
         const id = validateId(args?.id)
         if (!id) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: id is required and must be valid (use topicId from list operations)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: id is required and must be valid (use topicId from list operations)",
+          )
         }
         result = await replyLater(id)
         break
@@ -1534,15 +1512,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "hey_unset_aside": {
         const postingId = validateId(args?.posting_id)
         if (!postingId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: posting_id is required and must be valid (use postingId from hey_list_set_aside)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: posting_id is required and must be valid (use postingId from hey_list_set_aside)",
+          )
         }
         result = await removeFromSetAside(postingId)
         break
@@ -1550,15 +1522,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "hey_remove_reply_later": {
         const postingId = validateId(args?.posting_id)
         if (!postingId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: posting_id is required and must be valid (use postingId from hey_list_reply_later)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: posting_id is required and must be valid (use postingId from hey_list_reply_later)",
+          )
         }
         result = await removeFromReplyLater(postingId)
         break
@@ -1572,40 +1538,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           | "paper_trail"
           | undefined
         if (!senderEmail) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: sender_email is required and must be a valid email",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: sender_email is required and must be a valid email",
+          )
         }
         if (!action || !["approve", "reject"].includes(action)) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: action is required (approve or reject)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: action is required (approve or reject)")
         }
         if (
           destination &&
           !["imbox", "feed", "paper_trail"].includes(destination)
         ) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: destination must be one of imbox, feed, paper_trail",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: destination must be one of imbox, feed, paper_trail",
+          )
         }
         result =
           action === "approve"
@@ -1622,40 +1568,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           | "paper_trail"
           | undefined
         if (!clearanceId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: clearance_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: clearance_id is required and must be valid",
+          )
         }
         if (!action || !["approve", "reject"].includes(action)) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: action is required (approve or reject)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: action is required (approve or reject)")
         }
         if (
           destination &&
           !["imbox", "feed", "paper_trail"].includes(destination)
         ) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: destination must be one of imbox, feed, paper_trail",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: destination must be one of imbox, feed, paper_trail",
+          )
         }
         result =
           action === "approve"
@@ -1667,26 +1593,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const id = validateId(args?.id)
         const action = args?.action as string
         if (!id) {
-          return {
-            content: [
-              { type: "text", text: "Error: id is required and must be valid" },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: id is required and must be valid")
         }
         if (
           !action ||
           !["trash", "restore", "spam", "unspam"].includes(action)
         ) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: action is required (trash, restore, spam, or unspam)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: action is required (trash, restore, spam, or unspam)",
+          )
         }
         const statusFns: Record<string, (id: string) => Promise<unknown>> = {
           trash: trashEmail,
@@ -1700,12 +1615,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "hey_move_to": {
         const id = validateId(args?.id)
         if (!id) {
-          return {
-            content: [
-              { type: "text", text: "Error: id is required and must be valid" },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: id is required and must be valid")
         }
         const destination = args?.destination as
           | "imbox"
@@ -1715,15 +1625,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           !destination ||
           !["imbox", "feed", "paper_trail"].includes(destination)
         ) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: destination is required (imbox, feed, or paper_trail)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: destination is required (imbox, feed, or paper_trail)",
+          )
         }
         result = await moveTo(id, destination)
         break
@@ -1731,12 +1635,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "hey_mark_unseen": {
         const id = validateId(args?.id)
         if (!id) {
-          return {
-            content: [
-              { type: "text", text: "Error: id is required and must be valid" },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: id is required and must be valid")
         }
         result = await markAsUnseen(id)
         break
@@ -1747,15 +1646,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             ? undefined
             : validateId(args?.posting_id)
         if (args?.posting_id !== undefined && !postingId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: posting_id must be a valid ID string (omit it to mark the whole Imbox tray seen)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: posting_id must be a valid ID string (omit it to mark the whole Imbox tray seen)",
+          )
         }
         result = postingId
           ? await markPostingSeen(postingId)
@@ -1766,23 +1659,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const id = validateId(args?.id)
         const status = args?.status as "read" | "unread"
         if (!id) {
-          return {
-            content: [
-              { type: "text", text: "Error: id is required and must be valid" },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: id is required and must be valid")
         }
         if (!status || !["read", "unread"].includes(status)) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: status is required (read or unread)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: status is required (read or unread)")
         }
         result =
           status === "read" ? await markAsRead(id) : await markAsUnread(id)
@@ -1793,15 +1673,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const slot = args?.slot as BubbleUpSlot
         const date = args?.date as string | undefined
         if (!topicId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
+          )
         }
         const validSlots = [
           "now",
@@ -1813,15 +1687,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           "custom",
         ]
         if (!slot || !validSlots.includes(slot)) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: slot is required and must be one of: now, today, tomorrow, weekend, next_week, surprise_me, custom",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: slot is required and must be one of: now, today, tomorrow, weekend, next_week, surprise_me, custom",
+          )
         }
         result = await bubbleUp(topicId, slot, date)
         break
@@ -1830,26 +1698,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const topicId = validateId(args?.topic_id)
         const date = args?.date as string | undefined
         if (!topicId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
+          )
         }
         if (!date) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: date is required (YYYY-MM-DD format)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: date is required (YYYY-MM-DD format)")
         }
         result = await bubbleUpIfNoReply(topicId, date)
         break
@@ -1857,15 +1711,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "hey_pop_bubble": {
         const topicId = validateId(args?.topic_id)
         if (!topicId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult(
+            "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
+          )
         }
         result = await popBubble(topicId)
         break
@@ -1874,26 +1722,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const postingId = validateId(args?.posting_id)
         const action = args?.action as string
         if (!postingId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: posting_id is required and must be valid",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: posting_id is required and must be valid")
         }
         if (!action || !["mute", "unmute"].includes(action)) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: action is required (mute or unmute)",
-              },
-            ],
-            isError: true,
-          }
+          return errorResult("Error: action is required (mute or unmute)")
         }
         result =
           action === "mute"

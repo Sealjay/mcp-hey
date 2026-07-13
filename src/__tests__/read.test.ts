@@ -1,4 +1,28 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test"
+import { extractEmailsFromHtml } from "../tools/read"
+
+// Real Hey.com markup shape for /entries/drafts (verified live 2026-07-12):
+// article.posting with no data-identifier/data-entry-id and no /topics/
+// link — the only ID-bearing link is /messages/{id}/edit.
+const mockDraftsHtml = `
+<!DOCTYPE html>
+<html>
+<body>
+  <section id="postings" class="postings">
+    <article class="posting" data-list-target="item">
+      <div class="posting__body posting__body--with-action">
+        <a class="posting__column posting__link permalink" href="/messages/2165561906/edit">
+          <span class="posting__title">Fwd: Gift Delivery Tracking Number</span>
+          <span class="posting__detail">Me</span>
+          <span class="posting__summary">Forwarded message preview...</span>
+          <time class="posting__time" datetime="2026-06-07T10:00:00Z">Jun 7</time>
+        </a>
+      </div>
+    </article>
+  </section>
+</body>
+</html>
+`
 
 // Mock HTML responses
 const mockImboxHtml = `
@@ -160,6 +184,19 @@ describe("Read Tools", () => {
 
       expect(results.length).toBe(1)
       expect(results[0].getAttribute("data-entry-id")).toBe("99999")
+    })
+  })
+
+  describe("Drafts folder parsing", () => {
+    test("should extract message ID from /messages/{id}/edit link when no topic/entry/posting ID is present", () => {
+      const emails = extractEmailsFromHtml(mockDraftsHtml)
+
+      expect(emails.length).toBe(1)
+      expect(emails[0].id).toBe("2165561906")
+      expect(emails[0].subject).toBe("Fwd: Gift Delivery Tracking Number")
+      expect(emails[0].topicId).toBeUndefined()
+      expect(emails[0].entryId).toBeUndefined()
+      expect(emails[0].postingId).toBeUndefined()
     })
   })
 })

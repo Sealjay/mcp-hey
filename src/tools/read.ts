@@ -90,7 +90,6 @@ export interface ListOptions {
 export interface Label {
   id: string
   name: string
-  color?: string
 }
 
 export interface Collection {
@@ -188,45 +187,41 @@ export function extractEmailsFromHtml(
         }
       }
 
-      // 3. Topic ID from href links within the article
+      // 3. Topic ID from href links within the article. Try selectors in
+      // order of specificity, stopping at the first one that yields a match.
       let topicId: string | undefined
-      const topicLink = entry.querySelector("a[href*='/topics/']")
-      if (topicLink) {
-        const href = topicLink.getAttribute("href") || ""
+      const topicLinkSelectors = [
+        "a[href*='/topics/']",
+        ".posting__title a[href*='/topics/'], .posting__link[href*='/topics/']",
+        "a[href]",
+      ]
+      for (const selector of topicLinkSelectors) {
+        const link = entry.querySelector(selector)
+        const href = link?.getAttribute("href") || ""
         const topicMatch = href.match(/\/topics\/(\d+)/)
         if (topicMatch) {
           topicId = topicMatch[1]
+          break
         }
       }
 
-      // If no topic link inside, check if the posting__title or posting__link is a topic link
-      if (!topicId) {
-        const titleLink = entry.querySelector(
-          ".posting__title a[href*='/topics/'], .posting__link[href*='/topics/']",
-        )
-        if (titleLink) {
-          const href = titleLink.getAttribute("href") || ""
-          const topicMatch = href.match(/\/topics\/(\d+)/)
-          if (topicMatch) {
-            topicId = topicMatch[1]
+      // Drafts have no topic/entry/posting ID — Hey addresses them by
+      // message ID via the row's /messages/{id}/edit link instead. Without
+      // this, every draft entry falls through with no id and is dropped.
+      let messageId: string | undefined
+      if (!topicId && !entryId && !postingId) {
+        const messageLink = entry.querySelector("a[href*='/messages/']")
+        if (messageLink) {
+          const href = messageLink.getAttribute("href") || ""
+          const messageMatch = href.match(/\/messages\/(\d+)/)
+          if (messageMatch) {
+            messageId = messageMatch[1]
           }
         }
       }
 
-      // Also check any link within the entry for topic ID
-      if (!topicId) {
-        const anyLink = entry.querySelector("a[href]")
-        if (anyLink) {
-          const href = anyLink.getAttribute("href") || ""
-          const topicMatch = href.match(/\/topics\/(\d+)/)
-          if (topicMatch) {
-            topicId = topicMatch[1]
-          }
-        }
-      }
-
-      // Primary ID: prefer topic ID > entry ID > posting ID
-      const id = topicId || entryId || postingId
+      // Primary ID: prefer topic ID > entry ID > posting ID > message ID
+      const id = topicId || entryId || postingId || messageId
       if (!id) continue
 
       // Subject is in .posting__title, or heading elements for Focus & Reply view
@@ -854,29 +849,38 @@ export async function listDrafts(
   return listFolder("drafts", "/entries/drafts", options)
 }
 
+function extractIdNameLinks(
+  html: string,
+  urlSegment: string,
+  skipNames: string[],
+): { id: string; name: string }[] {
+  const root = parseHtml(html)
+  const results: { id: string; name: string }[] = []
+
+  const links = root.querySelectorAll(`a[href*='/${urlSegment}/']`)
+  const idPattern = new RegExp(`/${urlSegment}/(\\d+)`)
+
+  for (const link of links) {
+    const href = link.getAttribute("href")
+    const match = href?.match(idPattern)
+    if (!match) continue
+
+    const id = match[1]
+    const name = link.text?.trim() || "Unnamed"
+
+    if (skipNames.includes(name)) continue
+
+    results.push({ id, name })
+  }
+
+  return results
+}
+
 function extractLabelsFromHtml(html: string): Label[] {
   try {
-    const root = parseHtml(html)
-    const labels: Label[] = []
-
-    // Hey.com labels page has links to /folders/{id}
-    const links = root.querySelectorAll("a[href*='/folders/']")
-
-    for (const link of links) {
-      const href = link.getAttribute("href")
-      const match = href?.match(/\/folders\/(\d+)/)
-      if (!match) continue
-
-      const id = match[1]
-      const name = link.text?.trim() || "Unnamed"
-
-      // Skip "New label" link and navigation links
-      if (name === "New label" || name === "All Labels") continue
-
-      labels.push({ id, name })
-    }
-
-    return labels
+    // Hey.com labels page has links to /folders/{id}. Skip "New label" and
+    // the "All Labels" navigation link.
+    return extractIdNameLinks(html, "folders", ["New label", "All Labels"])
   } catch (err) {
     console.error("[mcp-hey] Failed to parse labels HTML:", err)
     return []
@@ -890,27 +894,9 @@ export async function listLabels(): Promise<Label[]> {
 
 function extractCollectionsFromHtml(html: string): Collection[] {
   try {
-    const root = parseHtml(html)
-    const collections: Collection[] = []
-
-    // Collections page has links to /collections/{id}
-    const links = root.querySelectorAll("a[href*='/collections/']")
-
-    for (const link of links) {
-      const href = link.getAttribute("href")
-      const match = href?.match(/\/collections\/(\d+)/)
-      if (!match) continue
-
-      const id = match[1]
-      const name = link.text?.trim() || "Unnamed"
-
-      // Skip if it's just "All Collections" link
-      if (name === "All Collections") continue
-
-      collections.push({ id, name })
-    }
-
-    return collections
+    // Collections page has links to /collections/{id}. Skip the "All
+    // Collections" navigation link.
+    return extractIdNameLinks(html, "collections", ["All Collections"])
   } catch (err) {
     console.error("[mcp-hey] Failed to parse collections HTML:", err)
     return []

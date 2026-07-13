@@ -133,15 +133,7 @@ function decodeRfc2047(input: string): string {
 
 /** Decode a base64 string into raw bytes. Whitespace is stripped. */
 function base64ToBytes(b64: string): Uint8Array {
-  const cleaned = b64.replace(/\s+/g, "")
-  if (cleaned.length === 0) return new Uint8Array(0)
-  // Bun/Node both ship atob.
-  const binary = atob(cleaned)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
+  return new Uint8Array(Buffer.from(b64, "base64"))
 }
 
 /** Decode quoted-printable into bytes. */
@@ -313,18 +305,9 @@ function mimeToExt(mime: string): string {
 function sanitiseFilename(name: string): string {
   // Remove any directory component.
   const base = name.replace(/^.*[\\/]/, "").trim()
-  // Replace forbidden characters and ASCII control bytes (0x00-0x1f) with
-  // underscores. We iterate so the linter does not flag a control-char range
-  // in the regex, but the behaviour is identical to /[ -<>:"/\\|?*]/g.
-  let safe = ""
-  for (const ch of base) {
-    const code = ch.charCodeAt(0)
-    if (code <= 0x1f || '<>:"/\\|?*'.includes(ch)) {
-      safe += "_"
-    } else {
-      safe += ch
-    }
-  }
+  // Replace forbidden characters and ASCII control bytes (0x00-0x1f) with underscores.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional filename sanitisation
+  const safe = base.replace(/[\x00-\x1f<>:"/\\|?*]/g, "_")
   return safe.length > 0 ? safe : "attachment.bin"
 }
 
@@ -363,18 +346,17 @@ export function walkRawMime(raw: string): {
 }
 
 /**
- * Probe attachments from an already-fetched raw MIME string.
- * Returns the same shape as `listAttachmentsForEmail` but without
- * making an additional network request for the `.text` content.
+ * Build attachment and calendar-invite metadata from a list of already
+ * classified attachment parts. Shared by `probeAttachmentsFromRaw` (raw
+ * MIME string already in hand) and `listAttachmentsForEmail` (fetches the
+ * raw MIME first).
  */
-export function probeAttachmentsFromRaw(
-  raw: string,
-  _emailId: string,
+function buildAttachmentMeta(
+  attachmentParts: Array<{ id: string; index: number; part: MimePart }>,
 ): {
   attachments: AttachmentMeta[]
   calendar_invites: CalendarInviteMeta[]
 } {
-  const { attachmentParts } = walkRawMime(raw)
   const attachments: AttachmentMeta[] = []
   const calendar_invites: CalendarInviteMeta[] = []
 
@@ -405,6 +387,22 @@ export function probeAttachmentsFromRaw(
   }
 
   return { attachments, calendar_invites }
+}
+
+/**
+ * Probe attachments from an already-fetched raw MIME string.
+ * Returns the same shape as `listAttachmentsForEmail` but without
+ * making an additional network request for the `.text` content.
+ */
+export function probeAttachmentsFromRaw(
+  raw: string,
+  _emailId: string,
+): {
+  attachments: AttachmentMeta[]
+  calendar_invites: CalendarInviteMeta[]
+} {
+  const { attachmentParts } = walkRawMime(raw)
+  return buildAttachmentMeta(attachmentParts)
 }
 
 /**
@@ -430,36 +428,7 @@ export async function listAttachmentsForEmail(emailId: string): Promise<{
   calendar_invites: CalendarInviteMeta[]
 }> {
   const { attachmentParts } = await fetchAndWalkRawMessage(emailId)
-  const attachments: AttachmentMeta[] = []
-  const calendar_invites: CalendarInviteMeta[] = []
-
-  for (const { id, index, part } of attachmentParts) {
-    const mime = pureMime(part.headers["content-type"])
-    const filename = deriveFilename(part, index)
-    const is_calendar = mime === "text/calendar"
-
-    attachments.push({
-      id,
-      filename,
-      size: part.decoded.byteLength,
-      mime,
-      is_calendar,
-    })
-
-    if (is_calendar) {
-      const ics = parseIcs(part.text)
-      calendar_invites.push({
-        id,
-        filename,
-        summary: ics.title,
-        start: ics.start,
-        end: ics.end,
-        attendees: ics.attendees,
-      })
-    }
-  }
-
-  return { attachments, calendar_invites }
+  return buildAttachmentMeta(attachmentParts)
 }
 
 /**

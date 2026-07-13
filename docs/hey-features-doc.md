@@ -40,8 +40,9 @@ Tool definitions and parameters live in [`TOOLS.md`](TOOLS.md). Endpoint details
 | Send New Email | + Write | `hey_send_email` | Implemented |
 | Reply to Thread | Reply Now | `hey_reply` | Implemented |
 | Forward Email | More > Forward | `hey_forward` | Implemented |
-| Save Draft | Save draft | — | Not implemented |
-| Delete Draft | Compose trash | — | Not implemented |
+| Save Draft | Save draft | `hey_save_draft` | Implemented |
+| Edit Draft | Drafts list → item → Save draft | `hey_edit_draft` | Implemented |
+| Delete Draft | Compose trash | `hey_delete_draft` | Implemented |
 | Schedule Send | Send > Later | — | Not implemented |
 | Send with Bubble Up | Send > Now and Bubble Up | — | Not implemented |
 

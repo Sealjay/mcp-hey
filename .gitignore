@@ -51,3 +51,6 @@ bun.lockb
 
 # Live integration tests (contain account-specific data)
 src/__tests__/live-*.ts
+
+# Local Claude Code settings
+.claude/settings.local.json

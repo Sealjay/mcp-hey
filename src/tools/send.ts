@@ -101,6 +101,34 @@ function findInvalidEmails(emails: string[]): string[] {
 /** Maximum number of recipients across to/cc/bcc combined. */
 const MAX_RECIPIENTS = 50
 
+/**
+ * Validate one or more named recipient lists: total count across all lists
+ * against MAX_RECIPIENTS (using capLabel in the error, e.g. "to/cc" or
+ * "to/cc/bcc"), then each list's email formats (using its own label, e.g.
+ * "recipient", "CC", "BCC"). Returns the error string on first failure.
+ */
+function validateRecipientLists(
+  lists: { label: string; emails?: string[] }[],
+  capLabel: string,
+): string | undefined {
+  const totalRecipients = lists.reduce(
+    (sum, list) => sum + (list.emails?.length ?? 0),
+    0,
+  )
+  if (totalRecipients > MAX_RECIPIENTS) {
+    return `Too many recipients (${totalRecipients}). Maximum is ${MAX_RECIPIENTS} across ${capLabel} combined.`
+  }
+  for (const list of lists) {
+    if (list.emails && list.emails.length > 0) {
+      const invalid = findInvalidEmails(list.emails)
+      if (invalid.length > 0) {
+        return `Invalid ${list.label} email(s): ${invalid.join(", ")}`
+      }
+    }
+  }
+  return undefined
+}
+
 async function getAccountInfo(): Promise<AccountInfo> {
   // Return cached account info if available
   if (accountInfoCache.value) {
@@ -224,6 +252,40 @@ export interface SendResult {
   error?: string
 }
 
+/**
+ * Classify a Hey.com form submission response: 2xx and non-rejecting 302s
+ * are success (invalidating the cache for `cacheAction`), an auth-redirect
+ * 302 is a session error, a validation-redirect 302 returns `rejectedMessage`,
+ * anything else is a generic status-code error.
+ */
+function handleFormResponse(
+  response: Response,
+  cacheAction: Parameters<typeof invalidateForAction>[0],
+  rejectedMessage: string,
+): SendResult {
+  if (response.status >= 200 && response.status < 300) {
+    safeInvalidateCache(cacheAction)
+    return { success: true }
+  }
+  if (response.status === 302) {
+    const classification = classifyRedirect(response)
+
+    if (classification.type === "auth_failure") {
+      return { success: false, error: "Session expired, please retry" }
+    }
+    if (classification.type === "validation_error") {
+      return { success: false, error: rejectedMessage }
+    }
+
+    safeInvalidateCache(cacheAction)
+    return { success: true, messageId: classification.messageId }
+  }
+  return {
+    success: false,
+    error: `Request failed with status ${response.status}`,
+  }
+}
+
 export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
   const { to, subject, body, cc } = params
 
@@ -231,33 +293,15 @@ export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
     return { success: false, error: "At least one recipient is required" }
   }
 
-  // Cap total recipients to prevent abuse
-  const totalRecipients = to.length + (cc?.length ?? 0)
-  if (totalRecipients > MAX_RECIPIENTS) {
-    return {
-      success: false,
-      error: `Too many recipients (${totalRecipients}). Maximum is ${MAX_RECIPIENTS} across to/cc combined.`,
-    }
-  }
-
-  // Validate recipient email formats
-  const invalidTo = findInvalidEmails(to)
-  if (invalidTo.length > 0) {
-    return {
-      success: false,
-      error: `Invalid recipient email(s): ${invalidTo.join(", ")}`,
-    }
-  }
-
-  // Validate CC email formats if present
-  if (cc && cc.length > 0) {
-    const invalidCc = findInvalidEmails(cc)
-    if (invalidCc.length > 0) {
-      return {
-        success: false,
-        error: `Invalid CC email(s): ${invalidCc.join(", ")}`,
-      }
-    }
+  const recipientError = validateRecipientLists(
+    [
+      { label: "recipient", emails: to },
+      { label: "CC", emails: cc },
+    ],
+    "to/cc",
+  )
+  if (recipientError) {
+    return { success: false, error: recipientError }
   }
 
   if (!subject.trim()) {
@@ -294,30 +338,11 @@ export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
       heyClient.postForm("/messages", formData),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      safeInvalidateCache("send")
-      return { success: true }
-    }
-    if (response.status === 302) {
-      const classification = classifyRedirect(response)
-
-      if (classification.type === "auth_failure") {
-        return { success: false, error: "Session expired, please retry" }
-      }
-      if (classification.type === "validation_error") {
-        return {
-          success: false,
-          error: "Hey.com rejected the email (redirected back to compose form)",
-        }
-      }
-
-      safeInvalidateCache("send")
-      return { success: true, messageId: classification.messageId }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return handleFormResponse(
+      response,
+      "send",
+      "Hey.com rejected the email (redirected back to compose form)",
+    )
   } catch (err) {
     return {
       success: false,
@@ -341,41 +366,16 @@ export async function forwardEmail(params: ForwardParams): Promise<SendResult> {
     return { success: false, error: "At least one recipient is required" }
   }
 
-  // Cap total recipients to prevent abuse
-  const totalRecipients = to.length + (cc?.length ?? 0) + (bcc?.length ?? 0)
-  if (totalRecipients > MAX_RECIPIENTS) {
-    return {
-      success: false,
-      error: `Too many recipients (${totalRecipients}). Maximum is ${MAX_RECIPIENTS} across to/cc/bcc combined.`,
-    }
-  }
-
-  const invalidTo = findInvalidEmails(to)
-  if (invalidTo.length > 0) {
-    return {
-      success: false,
-      error: `Invalid recipient email(s): ${invalidTo.join(", ")}`,
-    }
-  }
-
-  if (cc && cc.length > 0) {
-    const invalidCc = findInvalidEmails(cc)
-    if (invalidCc.length > 0) {
-      return {
-        success: false,
-        error: `Invalid CC email(s): ${invalidCc.join(", ")}`,
-      }
-    }
-  }
-
-  if (bcc && bcc.length > 0) {
-    const invalidBcc = findInvalidEmails(bcc)
-    if (invalidBcc.length > 0) {
-      return {
-        success: false,
-        error: `Invalid BCC email(s): ${invalidBcc.join(", ")}`,
-      }
-    }
+  const recipientError = validateRecipientLists(
+    [
+      { label: "recipient", emails: to },
+      { label: "CC", emails: cc },
+      { label: "BCC", emails: bcc },
+    ],
+    "to/cc/bcc",
+  )
+  if (recipientError) {
+    return { success: false, error: recipientError }
   }
 
   try {
@@ -460,31 +460,11 @@ export async function forwardEmail(params: ForwardParams): Promise<SendResult> {
       heyClient.postForm("/messages", formData),
     )
 
-    if (response.status >= 200 && response.status < 300) {
-      safeInvalidateCache("forward")
-      return { success: true }
-    }
-    if (response.status === 302) {
-      const classification = classifyRedirect(response)
-
-      if (classification.type === "auth_failure") {
-        return { success: false, error: "Session expired, please retry" }
-      }
-      if (classification.type === "validation_error") {
-        return {
-          success: false,
-          error:
-            "Hey.com rejected the forward (redirected back to compose form)",
-        }
-      }
-
-      safeInvalidateCache("forward")
-      return { success: true, messageId: classification.messageId }
-    }
-    return {
-      success: false,
-      error: `Request failed with status ${response.status}`,
-    }
+    return handleFormResponse(
+      response,
+      "forward",
+      "Hey.com rejected the forward (redirected back to compose form)",
+    )
   } catch (err) {
     return {
       success: false,
@@ -809,38 +789,21 @@ export async function replyToEmail(params: ReplyParams): Promise<SendResult> {
     return { success: false, error: "Reply body is required" }
   }
 
-  // Cap total recipients to prevent abuse
-  const totalRecipients = (toOverride?.length ?? 0) + (ccOverride?.length ?? 0)
-  if (totalRecipients > MAX_RECIPIENTS) {
+  const recipientError = validateRecipientLists(
+    [
+      { label: "recipient", emails: toOverride },
+      { label: "CC", emails: ccOverride },
+    ],
+    "to/cc",
+  )
+  if (recipientError) {
+    return { success: false, error: recipientError }
+  }
+
+  if (toOverride !== undefined && toOverride.length === 0) {
     return {
       success: false,
-      error: `Too many recipients (${totalRecipients}). Maximum is ${MAX_RECIPIENTS} across to/cc combined.`,
-    }
-  }
-
-  if (toOverride !== undefined) {
-    if (toOverride.length === 0) {
-      return {
-        success: false,
-        error: "`to` must contain at least one recipient when provided",
-      }
-    }
-    const invalidTo = findInvalidEmails(toOverride)
-    if (invalidTo.length > 0) {
-      return {
-        success: false,
-        error: `Invalid recipient email(s): ${invalidTo.join(", ")}`,
-      }
-    }
-  }
-
-  if (ccOverride && ccOverride.length > 0) {
-    const invalidCc = findInvalidEmails(ccOverride)
-    if (invalidCc.length > 0) {
-      return {
-        success: false,
-        error: `Invalid CC email(s): ${invalidCc.join(", ")}`,
-      }
+      error: "`to` must contain at least one recipient when provided",
     }
   }
 
@@ -997,6 +960,189 @@ export async function replyToEmail(params: ReplyParams): Promise<SendResult> {
       success: false,
       error: `Reply draft ${draftId} created but send failed with status ${sendResponse.status}. Check Hey drafts.`,
     }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+export interface DraftFields {
+  to?: string[]
+  cc?: string[]
+  subject?: string
+  body?: string
+}
+
+export type SaveDraftParams = DraftFields
+
+export interface EditDraftParams extends DraftFields {
+  draftId: string
+}
+
+export interface DraftResult {
+  success: boolean
+  draftId?: string
+  error?: string
+}
+
+function validateDraftFields(fields: DraftFields): string | undefined {
+  const totalRecipients = (fields.to?.length ?? 0) + (fields.cc?.length ?? 0)
+  if (totalRecipients > MAX_RECIPIENTS) {
+    return `Too many recipients (${totalRecipients}). Maximum is ${MAX_RECIPIENTS} across to/cc combined.`
+  }
+  if (fields.to && fields.to.length > 0) {
+    const invalidTo = findInvalidEmails(fields.to)
+    if (invalidTo.length > 0) {
+      return `Invalid recipient email(s): ${invalidTo.join(", ")}`
+    }
+  }
+  if (fields.cc && fields.cc.length > 0) {
+    const invalidCc = findInvalidEmails(fields.cc)
+    if (invalidCc.length > 0) {
+      return `Invalid CC email(s): ${invalidCc.join(", ")}`
+    }
+  }
+  return undefined
+}
+
+function buildDraftFormData(
+  fields: DraftFields,
+  senderId: string,
+): URLSearchParams {
+  const formData = new URLSearchParams()
+  formData.append("acting_sender_id", senderId)
+  for (const recipient of fields.to ?? []) {
+    formData.append("entry[addressed][directly][]", recipient.trim())
+  }
+  for (const ccRecipient of fields.cc ?? []) {
+    formData.append("entry[addressed][copied][]", ccRecipient.trim())
+  }
+  if (fields.subject !== undefined) {
+    formData.append("message[subject]", fields.subject)
+  }
+  if (fields.body !== undefined) {
+    formData.append("message[content]", fields.body)
+  }
+  formData.append("entry[status]", "drafted")
+  return formData
+}
+
+/**
+ * Extract the draft/message ID Hey assigns on creation. Confirmed live
+ * 2026-07-12: `POST /messages` with `entry[status]=drafted` (no `commit`
+ * field, no `_method`) returns 204 with a `Location: /messages/{id}`
+ * header — unlike hey_send_email, which redirects with 302.
+ */
+export function extractDraftId(response: Response): string | undefined {
+  const location = response.headers.get("location") ?? ""
+  return location.match(/\/messages\/(\d+)/)?.[1]
+}
+
+/**
+ * Save a new draft (does not send). Use hey_edit_draft to update it and
+ * hey_send_email/hey_reply to send.
+ */
+export async function saveDraft(params: SaveDraftParams): Promise<DraftResult> {
+  const validationError = validateDraftFields(params)
+  if (validationError) {
+    return { success: false, error: validationError }
+  }
+
+  try {
+    const accountInfo = await getAccountInfo()
+    const formData = buildDraftFormData(params, accountInfo.senderId)
+
+    const response = await withCsrfRetry(() =>
+      heyClient.postTurbo("/messages", formData),
+    )
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `Request failed with status ${response.status}`,
+      }
+    }
+
+    const draftId = extractDraftId(response)
+    safeInvalidateCache("draft")
+    return { success: true, draftId }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+/**
+ * Update an existing draft's recipients, subject, or body. Fields omitted
+ * here are left as-is only if Hey's autosave already persisted them —
+ * pass every field you want to keep, since this call replaces subject/body
+ * outright rather than merging.
+ */
+export async function editDraft(params: EditDraftParams): Promise<DraftResult> {
+  const { draftId } = params
+
+  if (!draftId) {
+    return { success: false, error: "Draft ID is required" }
+  }
+
+  const validationError = validateDraftFields(params)
+  if (validationError) {
+    return { success: false, error: validationError }
+  }
+
+  try {
+    const accountInfo = await getAccountInfo()
+    const formData = buildDraftFormData(params, accountInfo.senderId)
+    formData.append("_method", "patch")
+
+    const response = await withCsrfRetry(() =>
+      heyClient.postTurbo(`/messages/${draftId}`, formData),
+    )
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `Request failed with status ${response.status}`,
+      }
+    }
+
+    safeInvalidateCache("draft")
+    return { success: true, draftId }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    }
+  }
+}
+
+/** Permanently delete a draft. This does not go to trash — it's gone. */
+export async function deleteDraft(draftId: string): Promise<DraftResult> {
+  if (!draftId) {
+    return { success: false, error: "Draft ID is required" }
+  }
+
+  try {
+    const formData = new URLSearchParams()
+    formData.append("_method", "delete")
+
+    const response = await withCsrfRetry(() =>
+      heyClient.post(`/entries/drafts/${draftId}`, formData),
+    )
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `Request failed with status ${response.status}`,
+      }
+    }
+
+    safeInvalidateCache("draft")
+    return { success: true, draftId }
   } catch (err) {
     return {
       success: false,
