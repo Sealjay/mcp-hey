@@ -1,7 +1,7 @@
 import { type HTMLElement, parse as parseHtml } from "node-html-parser"
 import {
-  type CacheMetadata,
   type CachedResult,
+  type CacheMetadata,
   cacheEmailDetail,
   cacheFolderHtml,
   cacheMessages,

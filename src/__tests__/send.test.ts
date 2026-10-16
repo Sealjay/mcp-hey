@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { parse as parseHtml } from "node-html-parser"
 import {
-  type ReplyContext,
-  type ThreadEntry,
   classifyRedirect,
   extractDraftId,
   extractThreadEntries,
   findLatestNonSelfSender,
+  type ReplyContext,
   resolveReplyRecipients,
+  type ThreadEntry,
 } from "../tools/send"
 
 function mockResponse(status: number, location?: string): Response {

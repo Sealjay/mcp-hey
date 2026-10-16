@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
-import { type Cookie, type Session, resolvePython3 } from "../session"
+import { type Cookie, resolvePython3, type Session } from "../session"
 
 // Mock session data
 const mockCookies: Cookie[] = [

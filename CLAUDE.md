@@ -1,147 +1,37 @@
 # Hey.com MCP Server
 
-A local MCP server providing Claude with read/write access to Hey.com email accounts. Uses reverse-engineered Hey.com web APIs with browser-identical HTTP requests to avoid detection.
-
-## Table of Contents
-
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Commands](#commands)
-- [Development Workflow](#development-workflow)
-- [Design Decisions](#design-decisions)
-- [Important Patterns](#important-patterns)
-- [Security](#security)
-- [API Documentation Maintenance](#api-documentation-maintenance)
-- [Commit Conventions](#commit-conventions)
-- [Pre-Commit Checklist](#pre-commit-checklist)
-
-> **File layout**: see [README.md](README.md) "Project structure". For the tool surface, see [`docs/TOOLS.md`](docs/TOOLS.md); for reverse-engineered endpoints, [`docs/API.md`](docs/API.md).
-
----
+Local MCP server giving Claude read/write access to Hey.com via reverse-engineered web APIs and browser-identical HTTP requests. File layout: [README.md](README.md). Tool surface: [`docs/TOOLS.md`](docs/TOOLS.md). Endpoints: [`docs/API.md`](docs/API.md).
 
 ## Architecture
 
-| Component | Description |
-|-----------|-------------|
-| MCP Server | Bun/TypeScript, stdio transport, ~30MB idle memory |
-| Auth Helper | Python/pywebview, spawns on-demand for login via system webview |
-| Communication | File-based session sharing via `data/hey-cookies.json` |
-
----
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|------------|
-| Runtime | Bun 1.1+ |
-| Language | TypeScript (strict mode) |
-| Auth | Python 3.10+ with pywebview |
-| MCP SDK | @modelcontextprotocol/sdk |
-| Testing | Bun test runner |
-| Linting | Biome |
-
----
+- **MCP server** (`src/index.ts`): Bun, TypeScript strict, `@modelcontextprotocol/server` v2 low-level `Server` with `tools/list` / `tools/call` handlers. `serveStdio` picks the protocol era (2026-07-28 or 2025 `initialize`) per connection. Exits when stdin closes.
+- **Auth helper** (`auth/hey-auth.py`): Python/pywebview, spawned on demand; writes session cookies to `data/hey-cookies.json` (mode 600).
+- **Cache** (`src/cache/`): SQLite for messages, threads and search.
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `bun run dev` | Start MCP server in development mode |
-| `bun run build` | Build for production |
-| `bun test` | Run all tests |
-| `bun test -- -t "name"` | Run single test suite |
-| `python auth/hey-auth.py` | Manual auth trigger |
-
----
-
-## Development Workflow
-
-**Always use `bun`, not `npm`.**
-
-### TypeScript LSP
-
-The project has full TypeScript LSP support via `tsconfig.json` (strict mode, Bun types). Use the LSP for type checking before committing — run `bunx tsc --noEmit` to verify. The LSP provides autocompletion, go-to-definition, and inline type errors in supported editors.
-
-### TypeScript (Biome)
+Always `bun`, never `npm`.
 
 ```sh
-bun run lint             # Check for issues
-bun run format           # Fix issues (lint + format)
-bunx tsc --noEmit        # Type check (no output)
+bun run dev              # run the server
+bun test                 # all tests; bun test -t "name" for one suite
+bun run lint             # Biome check
+bun run format           # Biome fix
+bunx tsc --noEmit        # type check
+uv run ruff check . && uv run ruff format .   # Python helper
 ```
 
-### Python (UV + Ruff)
+## Rules
 
-```sh
-uv run ruff check .      # Lint
-uv run ruff format .     # Format
-```
+- **Correctness over backward compatibility.** Fix the behaviour and the docs; don't add workarounds for broken parameter types.
+- Every request carries realistic browser headers. Fetch a fresh CSRF token before writes. Back off on `x-ratelimit`.
+- Never store credentials, only session cookies. Validate the session on startup and before sensitive operations.
+- Tool descriptions and annotations follow `.claude/rules/mcp-tool-descriptions.md`.
 
----
+## Hey API changes
 
-## Design Decisions
+The API is reverse-engineered and changes without notice. When you touch an endpoint, record the actual traffic (URL, method, parameters, response codes, cookie names, enum values from the UI) in [`docs/API.md`](docs/API.md) and its changelog. Check that changelog before assuming an endpoint still works.
 
-| Decision | Rationale |
-|----------|-----------|
-| curl_cffi via Python subprocess | TLS/HTTP2 fingerprint matching when needed |
-| Bun's native fetch | Lightweight requests with custom headers |
-| No bundled Chromium | System webview for auth minimises footprint |
-| Local cookie storage | Never store credentials, only session cookies |
-| Rate limit parsing | Respect `x-ratelimit` headers |
-| **Correctness over backward compatibility** | When fixing bugs or updating APIs, prefer correct behaviour over maintaining broken backward compatibility. Update documentation and require correct parameter types rather than adding workarounds. |
+## Before committing
 
----
-
-## Important Patterns
-
-| Pattern | Details |
-|---------|---------|
-| Browser-realistic headers | All HTTP requests must include realistic headers |
-| CSRF tokens | Fetched fresh before write operations |
-| Rate limiting | Exponential backoff when limits approached |
-| Session validation | Checked on startup and before sensitive operations |
-
----
-
-## Security
-
-| Measure | Implementation |
-|---------|----------------|
-| Cookie permissions | Stored with 600 permissions |
-| Credential handling | No credentials ever stored |
-| Auth flow | Happens entirely in Hey's webview |
-| Transport | MCP uses stdio (no network exposure) |
-
----
-
-## API Documentation Maintenance
-
-> **IMPORTANT**: The Hey.com API is reverse-engineered and may change without notice. Keep `docs/API.md` current as you work.
-
-When investigating or fixing Hey.com API issues:
-
-| Task | Action |
-|------|--------|
-| Capture requests | Use Chrome automation to record actual network traffic |
-| Document endpoints | Include exact URLs, methods, parameters, response codes |
-| Track cookie names | Hey.com may change these (e.g., `session_token` vs `_hey_session`) |
-| Record enum values | Capture actual values from UI (e.g., bubble up time slots) |
-| Update docs | If an endpoint has changed, update immediately |
-
-The authoritative log of endpoint changes lives in [`docs/API.md`](docs/API.md#changelog). Consult it before assuming an endpoint still works.
-
----
-
-## Commit Conventions
-
-Use conventional commit format.
-
-**Valid types:** `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `cicd`, `revert`, `WIP`
-
----
-
-## Pre-Commit Checklist
-
-- [ ] Run `bun run format` and `bun run lint`
-- [ ] Ensure all tests pass with `bun test`
-- [ ] Update `docs/API.md` if any API behaviour was discovered or changed
+Conventional commits (`feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `cicd`, `revert`, `WIP`). Run `bun run format`, `bun run lint`, `bunx tsc --noEmit` and `bun test`, and update `docs/API.md` for any API behaviour you discovered.

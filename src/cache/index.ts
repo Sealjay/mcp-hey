@@ -11,22 +11,20 @@ export {
 } from "./db"
 
 export {
-  type CacheMetadata,
   type CachedResult,
+  type CacheMetadata,
   cacheEmailDetail,
   cacheFolderHtml,
   cacheMessages,
   cacheSearchResults,
-  getCacheStats,
   getCachedEmailDetail,
   getCachedFolderHtml,
   getCachedMessages,
   getCachedSearch,
+  getCacheStats,
   invalidateForAction,
   needsRefresh,
   updateReadStatus,
 } from "./messages"
-
-export { ftsSearch, getMessageCount, getUnreadCount } from "./search"
-
 export { TTL_CONFIG } from "./schema"
+export { ftsSearch, getMessageCount, getUnreadCount } from "./search"

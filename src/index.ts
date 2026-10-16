@@ -1,12 +1,8 @@
 #!/usr/bin/env bun
-import { Server } from "@modelcontextprotocol/sdk/server/index.js"
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  type Tool,
-} from "@modelcontextprotocol/sdk/types.js"
+import { Server, type Tool } from "@modelcontextprotocol/server"
+import { serveStdio } from "@modelcontextprotocol/server/stdio"
 
+import pkg from "../package.json"
 import {
   closeDatabase,
   getCacheStats,
@@ -19,9 +15,9 @@ import { sanitiseError } from "./errors"
 import { heyClient } from "./hey-client"
 import { downloadAttachment, getCalendarInvite } from "./tools/attachments"
 import {
-  type BubbleUpSlot,
   addLabel,
   addToCollection,
+  type BubbleUpSlot,
   bubbleUp,
   bubbleUpIfNoReply,
   ignoreThread,
@@ -1159,640 +1155,647 @@ const tools: Tool[] = [
   },
 ]
 
-// Create MCP server
-const server = new Server(
-  {
-    name: "mcp-hey",
-    version: "0.5.0",
-  },
-  {
-    capabilities: {
-      tools: {},
+// A fresh server per serveStdio pin: a client that probes with server/discover
+// and falls back to initialize gets a second, legacy-era instance.
+function createServer(): Server {
+  const server = new Server(
+    {
+      name: "mcp-hey",
+      version: pkg.version,
     },
-  },
-)
+    {
+      capabilities: {
+        tools: {},
+      },
+    },
+  )
 
-// Handle list tools request
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return { tools }
-})
+  // Handle list tools request
+  server.setRequestHandler("tools/list", async () => {
+    return { tools }
+  })
 
-// Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params
+  // Handle tool calls
+  server.setRequestHandler("tools/call", async (request) => {
+    const { name, arguments: args } = request.params
 
-  try {
-    let result: unknown
+    try {
+      let result: unknown
 
-    switch (name) {
-      // Reading tools
-      case "hey_list_emails": {
-        const folder = args?.folder as string
-        const validFolders = [
-          "imbox",
-          "feed",
-          "paper_trail",
-          "trash",
-          "spam",
-          "drafts",
-          "sent",
-        ]
-        if (!folder || !validFolders.includes(folder)) {
-          return errorResult(
-            "Error: folder is required and must be one of: imbox, feed, paper_trail, trash, spam, drafts, sent",
-          )
-        }
-        const limit = clampNumber(args?.limit, 25, 1, 100)
-        const page = clampNumber(args?.page, 1, 1, 1000)
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        const options = { limit, page, forceRefresh }
-        const folderFns: Record<
-          string,
-          (opts: {
-            limit: number
-            page: number
-            forceRefresh: boolean
-          }) => Promise<unknown>
-        > = {
-          imbox: listImbox,
-          feed: listFeed,
-          paper_trail: listPaperTrail,
-          trash: listTrash,
-          spam: listSpam,
-          drafts: listDrafts,
-          sent: listSent,
-        }
-        result = await folderFns[folder](options)
-        break
-      }
-      case "hey_imbox_summary": {
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        result = await getImboxSummary({ forceRefresh })
-        break
-      }
-      case "hey_list_set_aside": {
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        result = await listSetAside({ forceRefresh })
-        break
-      }
-      case "hey_list_reply_later": {
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        result = await listReplyLater({ forceRefresh })
-        break
-      }
-      case "hey_list_screener": {
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        result = await listScreener({ forceRefresh })
-        break
-      }
-      case "hey_list_labels": {
-        result = await listLabels()
-        break
-      }
-      case "hey_list_label_emails": {
-        const labelId = validateId(args?.label_id)
-        const limit = clampNumber(args?.limit, 25, 1, 100)
-        const page = clampNumber(args?.page, 1, 1, 1000)
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        if (!labelId) {
-          return errorResult("Error: label_id is required and must be valid")
-        }
-        result = await listLabelEmails(labelId, { limit, page, forceRefresh })
-        break
-      }
-      case "hey_list_collections": {
-        result = await listCollections()
-        break
-      }
-      case "hey_list_collection_emails": {
-        const collectionId = validateId(args?.collection_id)
-        const limit = clampNumber(args?.limit, 25, 1, 100)
-        const page = clampNumber(args?.page, 1, 1, 1000)
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        if (!collectionId) {
-          return errorResult(
-            "Error: collection_id is required and must be valid",
-          )
-        }
-        result = await listCollectionEmails(collectionId, {
-          limit,
-          page,
-          forceRefresh,
-        })
-        break
-      }
-      case "hey_label": {
-        const topicId = validateId(args?.topic_id)
-        const labelId = validateId(args?.label_id)
-        const action = args?.action as string
-        if (!topicId) {
-          return errorResult("Error: topic_id is required and must be valid")
-        }
-        if (!labelId) {
-          return errorResult("Error: label_id is required and must be valid")
-        }
-        if (!action || !["add", "remove"].includes(action)) {
-          return errorResult("Error: action is required (add or remove)")
-        }
-        result =
-          action === "add"
-            ? await addLabel(topicId, labelId)
-            : await removeLabel(topicId, labelId)
-        break
-      }
-      case "hey_collection": {
-        const topicId = validateId(args?.topic_id)
-        const collectionId = validateId(args?.collection_id)
-        const action = args?.action as string
-        if (!topicId) {
-          return errorResult("Error: topic_id is required and must be valid")
-        }
-        if (!collectionId) {
-          return errorResult(
-            "Error: collection_id is required and must be valid",
-          )
-        }
-        if (!action || !["add", "remove"].includes(action)) {
-          return errorResult("Error: action is required (add or remove)")
-        }
-        result =
-          action === "add"
-            ? await addToCollection(topicId, collectionId)
-            : await removeFromCollection(topicId, collectionId)
-        break
-      }
-      case "hey_read_email": {
-        const id = validateId(args?.id)
-        const format = (args?.format as "html" | "text") ?? "html"
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        const maxEntries = args?.max_entries
-          ? Math.max(1, Math.min(100, Number(args.max_entries)))
-          : undefined
-        if (!id) {
-          return errorResult("Error: id is required and must be valid")
-        }
-        result = await readEmail(id, { format, forceRefresh, maxEntries })
-        break
-      }
-      case "hey_download_attachment": {
-        const emailId = validateId(args?.email_id)
-        const attachmentId = validateAttachmentId(args?.attachment_id)
-        const savePath = validateSavePath(args?.save_path)
-        if (!emailId) {
-          return errorResult("Error: email_id is required and must be valid")
-        }
-        if (!attachmentId) {
-          return errorResult(
-            "Error: attachment_id is required (e.g. 'part-1' from hey_read_email)",
-          )
-        }
-        if (savePath === null) {
-          return errorResult(
-            "Error: save_path must be a non-empty string under 1024 chars",
-          )
-        }
-        result = await downloadAttachment({
-          emailId,
-          attachmentId,
-          savePath,
-        })
-        break
-      }
-      case "hey_get_calendar_invite": {
-        const emailId = validateId(args?.email_id)
-        const attachmentIdRaw = args?.attachment_id
-        const attachmentId =
-          attachmentIdRaw === undefined
-            ? undefined
-            : validateAttachmentId(attachmentIdRaw)
-        if (!emailId) {
-          return errorResult("Error: email_id is required and must be valid")
-        }
-        if (attachmentIdRaw !== undefined && !attachmentId) {
-          return errorResult(
-            "Error: attachment_id must be a valid id (e.g. 'part-1')",
-          )
-        }
-        result = await getCalendarInvite({
-          emailId,
-          attachmentId: attachmentId ?? undefined,
-        })
-        break
-      }
-      case "hey_search": {
-        const query = validateQuery(args?.query)
-        const limit = clampNumber(args?.limit, 25, 1, 100)
-        const forceRefresh = (args?.force_refresh as boolean) ?? false
-        if (!query) {
-          return errorResult("Error: query is required (1-500 characters)")
-        }
-        result = await searchEmails(query, { limit, forceRefresh })
-        break
-      }
-
-      // Sending tools
-      case "hey_send_email": {
-        const to = args?.to as string[]
-        const subject = args?.subject as string
-        const body = args?.body as string
-        const cc = args?.cc as string[] | undefined
-
-        if (!to || !subject || !body) {
-          return errorResult("Error: to, subject, and body are required")
-        }
-        result = await sendEmail({ to, subject, body, cc })
-        break
-      }
-      case "hey_reply": {
-        const threadId = validateId(args?.thread_id)
-        const body = args?.body as string
-        const to = args?.to as unknown
-        const cc = args?.cc as unknown
-
-        if (!threadId) {
-          return errorResult("Error: thread_id is required and must be valid")
-        }
-        if (!body || typeof body !== "string" || body.trim().length === 0) {
-          return errorResult("Error: body is required")
-        }
-
-        if (to !== undefined) {
-          if (!Array.isArray(to) || !to.every((e) => typeof e === "string")) {
+      switch (name) {
+        // Reading tools
+        case "hey_list_emails": {
+          const folder = args?.folder as string
+          const validFolders = [
+            "imbox",
+            "feed",
+            "paper_trail",
+            "trash",
+            "spam",
+            "drafts",
+            "sent",
+          ]
+          if (!folder || !validFolders.includes(folder)) {
             return errorResult(
-              "Error: to must be an array of email address strings",
+              "Error: folder is required and must be one of: imbox, feed, paper_trail, trash, spam, drafts, sent",
             )
           }
+          const limit = clampNumber(args?.limit, 25, 1, 100)
+          const page = clampNumber(args?.page, 1, 1, 1000)
+          const forceRefresh = (args?.force_refresh as boolean) ?? false
+          const options = { limit, page, forceRefresh }
+          const folderFns: Record<
+            string,
+            (opts: {
+              limit: number
+              page: number
+              forceRefresh: boolean
+            }) => Promise<unknown>
+          > = {
+            imbox: listImbox,
+            feed: listFeed,
+            paper_trail: listPaperTrail,
+            trash: listTrash,
+            spam: listSpam,
+            drafts: listDrafts,
+            sent: listSent,
+          }
+          result = await folderFns[folder](options)
+          break
         }
-
-        if (cc !== undefined) {
-          if (!Array.isArray(cc) || !cc.every((e) => typeof e === "string")) {
+        case "hey_imbox_summary": {
+          const forceRefresh = (args?.force_refresh as boolean) ?? false
+          result = await getImboxSummary({ forceRefresh })
+          break
+        }
+        case "hey_list_set_aside": {
+          const forceRefresh = (args?.force_refresh as boolean) ?? false
+          result = await listSetAside({ forceRefresh })
+          break
+        }
+        case "hey_list_reply_later": {
+          const forceRefresh = (args?.force_refresh as boolean) ?? false
+          result = await listReplyLater({ forceRefresh })
+          break
+        }
+        case "hey_list_screener": {
+          const forceRefresh = (args?.force_refresh as boolean) ?? false
+          result = await listScreener({ forceRefresh })
+          break
+        }
+        case "hey_list_labels": {
+          result = await listLabels()
+          break
+        }
+        case "hey_list_label_emails": {
+          const labelId = validateId(args?.label_id)
+          const limit = clampNumber(args?.limit, 25, 1, 100)
+          const page = clampNumber(args?.page, 1, 1, 1000)
+          const forceRefresh = (args?.force_refresh as boolean) ?? false
+          if (!labelId) {
+            return errorResult("Error: label_id is required and must be valid")
+          }
+          result = await listLabelEmails(labelId, { limit, page, forceRefresh })
+          break
+        }
+        case "hey_list_collections": {
+          result = await listCollections()
+          break
+        }
+        case "hey_list_collection_emails": {
+          const collectionId = validateId(args?.collection_id)
+          const limit = clampNumber(args?.limit, 25, 1, 100)
+          const page = clampNumber(args?.page, 1, 1, 1000)
+          const forceRefresh = (args?.force_refresh as boolean) ?? false
+          if (!collectionId) {
             return errorResult(
-              "Error: cc must be an array of email address strings",
+              "Error: collection_id is required and must be valid",
             )
           }
+          result = await listCollectionEmails(collectionId, {
+            limit,
+            page,
+            forceRefresh,
+          })
+          break
+        }
+        case "hey_label": {
+          const topicId = validateId(args?.topic_id)
+          const labelId = validateId(args?.label_id)
+          const action = args?.action as string
+          if (!topicId) {
+            return errorResult("Error: topic_id is required and must be valid")
+          }
+          if (!labelId) {
+            return errorResult("Error: label_id is required and must be valid")
+          }
+          if (!action || !["add", "remove"].includes(action)) {
+            return errorResult("Error: action is required (add or remove)")
+          }
+          result =
+            action === "add"
+              ? await addLabel(topicId, labelId)
+              : await removeLabel(topicId, labelId)
+          break
+        }
+        case "hey_collection": {
+          const topicId = validateId(args?.topic_id)
+          const collectionId = validateId(args?.collection_id)
+          const action = args?.action as string
+          if (!topicId) {
+            return errorResult("Error: topic_id is required and must be valid")
+          }
+          if (!collectionId) {
+            return errorResult(
+              "Error: collection_id is required and must be valid",
+            )
+          }
+          if (!action || !["add", "remove"].includes(action)) {
+            return errorResult("Error: action is required (add or remove)")
+          }
+          result =
+            action === "add"
+              ? await addToCollection(topicId, collectionId)
+              : await removeFromCollection(topicId, collectionId)
+          break
+        }
+        case "hey_read_email": {
+          const id = validateId(args?.id)
+          const format = (args?.format as "html" | "text") ?? "html"
+          const forceRefresh = (args?.force_refresh as boolean) ?? false
+          const maxEntries = args?.max_entries
+            ? Math.max(1, Math.min(100, Number(args.max_entries)))
+            : undefined
+          if (!id) {
+            return errorResult("Error: id is required and must be valid")
+          }
+          result = await readEmail(id, { format, forceRefresh, maxEntries })
+          break
+        }
+        case "hey_download_attachment": {
+          const emailId = validateId(args?.email_id)
+          const attachmentId = validateAttachmentId(args?.attachment_id)
+          const savePath = validateSavePath(args?.save_path)
+          if (!emailId) {
+            return errorResult("Error: email_id is required and must be valid")
+          }
+          if (!attachmentId) {
+            return errorResult(
+              "Error: attachment_id is required (e.g. 'part-1' from hey_read_email)",
+            )
+          }
+          if (savePath === null) {
+            return errorResult(
+              "Error: save_path must be a non-empty string under 1024 chars",
+            )
+          }
+          result = await downloadAttachment({
+            emailId,
+            attachmentId,
+            savePath,
+          })
+          break
+        }
+        case "hey_get_calendar_invite": {
+          const emailId = validateId(args?.email_id)
+          const attachmentIdRaw = args?.attachment_id
+          const attachmentId =
+            attachmentIdRaw === undefined
+              ? undefined
+              : validateAttachmentId(attachmentIdRaw)
+          if (!emailId) {
+            return errorResult("Error: email_id is required and must be valid")
+          }
+          if (attachmentIdRaw !== undefined && !attachmentId) {
+            return errorResult(
+              "Error: attachment_id must be a valid id (e.g. 'part-1')",
+            )
+          }
+          result = await getCalendarInvite({
+            emailId,
+            attachmentId: attachmentId ?? undefined,
+          })
+          break
+        }
+        case "hey_search": {
+          const query = validateQuery(args?.query)
+          const limit = clampNumber(args?.limit, 25, 1, 100)
+          const forceRefresh = (args?.force_refresh as boolean) ?? false
+          if (!query) {
+            return errorResult("Error: query is required (1-500 characters)")
+          }
+          result = await searchEmails(query, { limit, forceRefresh })
+          break
         }
 
-        result = await replyToEmail({
-          threadId,
-          body: body.trim(),
-          to: to as string[] | undefined,
-          cc: cc as string[] | undefined,
-        })
-        break
+        // Sending tools
+        case "hey_send_email": {
+          const to = args?.to as string[]
+          const subject = args?.subject as string
+          const body = args?.body as string
+          const cc = args?.cc as string[] | undefined
+
+          if (!to || !subject || !body) {
+            return errorResult("Error: to, subject, and body are required")
+          }
+          result = await sendEmail({ to, subject, body, cc })
+          break
+        }
+        case "hey_reply": {
+          const threadId = validateId(args?.thread_id)
+          const body = args?.body as string
+          const to = args?.to as unknown
+          const cc = args?.cc as unknown
+
+          if (!threadId) {
+            return errorResult("Error: thread_id is required and must be valid")
+          }
+          if (!body || typeof body !== "string" || body.trim().length === 0) {
+            return errorResult("Error: body is required")
+          }
+
+          if (to !== undefined) {
+            if (!Array.isArray(to) || !to.every((e) => typeof e === "string")) {
+              return errorResult(
+                "Error: to must be an array of email address strings",
+              )
+            }
+          }
+
+          if (cc !== undefined) {
+            if (!Array.isArray(cc) || !cc.every((e) => typeof e === "string")) {
+              return errorResult(
+                "Error: cc must be an array of email address strings",
+              )
+            }
+          }
+
+          result = await replyToEmail({
+            threadId,
+            body: body.trim(),
+            to: to as string[] | undefined,
+            cc: cc as string[] | undefined,
+          })
+          break
+        }
+
+        case "hey_forward": {
+          const entryId = validateId(args?.entry_id)
+          const to = args?.to as string[]
+          const cc = args?.cc as string[] | undefined
+          const bcc = args?.bcc as string[] | undefined
+          const body = args?.body as string | undefined
+
+          if (!entryId) {
+            return errorResult("Error: entry_id is required and must be valid")
+          }
+          if (!to || !Array.isArray(to) || to.length === 0) {
+            return errorResult(
+              "Error: to is required and must be a non-empty array of email addresses",
+            )
+          }
+          result = await forwardEmail({
+            entryId,
+            to,
+            cc,
+            bcc,
+            body: body?.trim(),
+          })
+          break
+        }
+
+        case "hey_save_draft": {
+          const to = args?.to as string[] | undefined
+          const cc = args?.cc as string[] | undefined
+          const subject = args?.subject as string | undefined
+          const body = args?.body as string | undefined
+
+          result = await saveDraft({ to, cc, subject, body })
+          break
+        }
+
+        case "hey_edit_draft": {
+          const draftId = validateId(args?.draft_id)
+          const to = args?.to as string[] | undefined
+          const cc = args?.cc as string[] | undefined
+          const subject = args?.subject as string | undefined
+          const body = args?.body as string | undefined
+
+          if (!draftId) {
+            return errorResult("Error: draft_id is required and must be valid")
+          }
+          result = await editDraft({ draftId, to, cc, subject, body })
+          break
+        }
+
+        case "hey_delete_draft": {
+          const draftId = validateId(args?.draft_id)
+          if (!draftId) {
+            return errorResult("Error: draft_id is required and must be valid")
+          }
+          result = await deleteDraft(draftId)
+          break
+        }
+
+        // Organisation tools
+        case "hey_set_aside": {
+          const id = validateId(args?.id)
+          if (!id) {
+            return errorResult(
+              "Error: id is required and must be valid (use topicId from list operations)",
+            )
+          }
+          result = await setAside(id)
+          break
+        }
+        case "hey_reply_later": {
+          const id = validateId(args?.id)
+          if (!id) {
+            return errorResult(
+              "Error: id is required and must be valid (use topicId from list operations)",
+            )
+          }
+          result = await replyLater(id)
+          break
+        }
+        case "hey_unset_aside": {
+          const postingId = validateId(args?.posting_id)
+          if (!postingId) {
+            return errorResult(
+              "Error: posting_id is required and must be valid (use postingId from hey_list_set_aside)",
+            )
+          }
+          result = await removeFromSetAside(postingId)
+          break
+        }
+        case "hey_remove_reply_later": {
+          const postingId = validateId(args?.posting_id)
+          if (!postingId) {
+            return errorResult(
+              "Error: posting_id is required and must be valid (use postingId from hey_list_reply_later)",
+            )
+          }
+          result = await removeFromReplyLater(postingId)
+          break
+        }
+        case "hey_screen": {
+          const senderEmail = validateEmail(args?.sender_email)
+          const action = args?.action as string
+          const destination = args?.destination as
+            | "imbox"
+            | "feed"
+            | "paper_trail"
+            | undefined
+          if (!senderEmail) {
+            return errorResult(
+              "Error: sender_email is required and must be a valid email",
+            )
+          }
+          if (!action || !["approve", "reject"].includes(action)) {
+            return errorResult("Error: action is required (approve or reject)")
+          }
+          if (
+            destination &&
+            !["imbox", "feed", "paper_trail"].includes(destination)
+          ) {
+            return errorResult(
+              "Error: destination must be one of imbox, feed, paper_trail",
+            )
+          }
+          result =
+            action === "approve"
+              ? await screenIn(senderEmail, destination)
+              : await screenOut(senderEmail)
+          break
+        }
+        case "hey_screen_by_id": {
+          const clearanceId = validateId(args?.clearance_id)
+          const action = args?.action as string
+          const destination = args?.destination as
+            | "imbox"
+            | "feed"
+            | "paper_trail"
+            | undefined
+          if (!clearanceId) {
+            return errorResult(
+              "Error: clearance_id is required and must be valid",
+            )
+          }
+          if (!action || !["approve", "reject"].includes(action)) {
+            return errorResult("Error: action is required (approve or reject)")
+          }
+          if (
+            destination &&
+            !["imbox", "feed", "paper_trail"].includes(destination)
+          ) {
+            return errorResult(
+              "Error: destination must be one of imbox, feed, paper_trail",
+            )
+          }
+          result =
+            action === "approve"
+              ? await screenInById(clearanceId, destination)
+              : await screenOutById(clearanceId)
+          break
+        }
+        case "hey_set_status": {
+          const id = validateId(args?.id)
+          const action = args?.action as string
+          if (!id) {
+            return errorResult("Error: id is required and must be valid")
+          }
+          if (
+            !action ||
+            !["trash", "restore", "spam", "unspam"].includes(action)
+          ) {
+            return errorResult(
+              "Error: action is required (trash, restore, spam, or unspam)",
+            )
+          }
+          const statusFns: Record<string, (id: string) => Promise<unknown>> = {
+            trash: trashEmail,
+            restore: restoreFromTrash,
+            spam: markAsSpam,
+            unspam: markAsNotSpam,
+          }
+          result = await statusFns[action](id)
+          break
+        }
+        case "hey_move_to": {
+          const id = validateId(args?.id)
+          if (!id) {
+            return errorResult("Error: id is required and must be valid")
+          }
+          const destination = args?.destination as
+            | "imbox"
+            | "feed"
+            | "paper_trail"
+          if (
+            !destination ||
+            !["imbox", "feed", "paper_trail"].includes(destination)
+          ) {
+            return errorResult(
+              "Error: destination is required (imbox, feed, or paper_trail)",
+            )
+          }
+          result = await moveTo(id, destination)
+          break
+        }
+        case "hey_mark_unseen": {
+          const id = validateId(args?.id)
+          if (!id) {
+            return errorResult("Error: id is required and must be valid")
+          }
+          result = await markAsUnseen(id)
+          break
+        }
+        case "hey_mark_seen": {
+          const postingId =
+            args?.posting_id === undefined
+              ? undefined
+              : validateId(args?.posting_id)
+          if (args?.posting_id !== undefined && !postingId) {
+            return errorResult(
+              "Error: posting_id must be a valid ID string (omit it to mark the whole Imbox tray seen)",
+            )
+          }
+          result = postingId
+            ? await markPostingSeen(postingId)
+            : await markAllSeen()
+          break
+        }
+        case "hey_read_status": {
+          const id = validateId(args?.id)
+          const status = args?.status as "read" | "unread"
+          if (!id) {
+            return errorResult("Error: id is required and must be valid")
+          }
+          if (!status || !["read", "unread"].includes(status)) {
+            return errorResult("Error: status is required (read or unread)")
+          }
+          result =
+            status === "read" ? await markAsRead(id) : await markAsUnread(id)
+          break
+        }
+        case "hey_bubble_up": {
+          const topicId = validateId(args?.topic_id)
+          const slot = args?.slot as BubbleUpSlot
+          const date = args?.date as string | undefined
+          if (!topicId) {
+            return errorResult(
+              "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
+            )
+          }
+          const validSlots = [
+            "now",
+            "today",
+            "tomorrow",
+            "weekend",
+            "next_week",
+            "surprise_me",
+            "custom",
+          ]
+          if (!slot || !validSlots.includes(slot)) {
+            return errorResult(
+              "Error: slot is required and must be one of: now, today, tomorrow, weekend, next_week, surprise_me, custom",
+            )
+          }
+          result = await bubbleUp(topicId, slot, date)
+          break
+        }
+        case "hey_bubble_up_if_no_reply": {
+          const topicId = validateId(args?.topic_id)
+          const date = args?.date as string | undefined
+          if (!topicId) {
+            return errorResult(
+              "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
+            )
+          }
+          if (!date) {
+            return errorResult("Error: date is required (YYYY-MM-DD format)")
+          }
+          result = await bubbleUpIfNoReply(topicId, date)
+          break
+        }
+        case "hey_pop_bubble": {
+          const topicId = validateId(args?.topic_id)
+          if (!topicId) {
+            return errorResult(
+              "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
+            )
+          }
+          result = await popBubble(topicId)
+          break
+        }
+        case "hey_thread_mute": {
+          const postingId = validateId(args?.posting_id)
+          const action = args?.action as string
+          if (!postingId) {
+            return errorResult(
+              "Error: posting_id is required and must be valid",
+            )
+          }
+          if (!action || !["mute", "unmute"].includes(action)) {
+            return errorResult("Error: action is required (mute or unmute)")
+          }
+          result =
+            action === "mute"
+              ? await ignoreThread(postingId)
+              : await unignoreThread(postingId)
+          break
+        }
+
+        // Cache management
+        case "hey_cache_status": {
+          const folder = args?.folder as string | undefined
+          const stats = getCacheStats()
+          const unreadCount = getUnreadCount(folder)
+          const messageCount = getMessageCount(folder)
+
+          result = {
+            ...stats,
+            folder_stats: folder
+              ? {
+                  folder,
+                  message_count: messageCount,
+                  unread_count: unreadCount,
+                }
+              : undefined,
+            global_unread: getUnreadCount(),
+          }
+          break
+        }
+
+        default:
+          return {
+            content: [{ type: "text", text: `Unknown tool: ${name}` }],
+            isError: true,
+          }
       }
 
-      case "hey_forward": {
-        const entryId = validateId(args?.entry_id)
-        const to = args?.to as string[]
-        const cc = args?.cc as string[] | undefined
-        const bcc = args?.bcc as string[] | undefined
-        const body = args?.body as string | undefined
-
-        if (!entryId) {
-          return errorResult("Error: entry_id is required and must be valid")
-        }
-        if (!to || !Array.isArray(to) || to.length === 0) {
-          return errorResult(
-            "Error: to is required and must be a non-empty array of email addresses",
-          )
-        }
-        result = await forwardEmail({
-          entryId,
-          to,
-          cc,
-          bcc,
-          body: body?.trim(),
-        })
-        break
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
       }
-
-      case "hey_save_draft": {
-        const to = args?.to as string[] | undefined
-        const cc = args?.cc as string[] | undefined
-        const subject = args?.subject as string | undefined
-        const body = args?.body as string | undefined
-
-        result = await saveDraft({ to, cc, subject, body })
-        break
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${sanitiseError(error)}`,
+          },
+        ],
+        isError: true,
       }
-
-      case "hey_edit_draft": {
-        const draftId = validateId(args?.draft_id)
-        const to = args?.to as string[] | undefined
-        const cc = args?.cc as string[] | undefined
-        const subject = args?.subject as string | undefined
-        const body = args?.body as string | undefined
-
-        if (!draftId) {
-          return errorResult("Error: draft_id is required and must be valid")
-        }
-        result = await editDraft({ draftId, to, cc, subject, body })
-        break
-      }
-
-      case "hey_delete_draft": {
-        const draftId = validateId(args?.draft_id)
-        if (!draftId) {
-          return errorResult("Error: draft_id is required and must be valid")
-        }
-        result = await deleteDraft(draftId)
-        break
-      }
-
-      // Organisation tools
-      case "hey_set_aside": {
-        const id = validateId(args?.id)
-        if (!id) {
-          return errorResult(
-            "Error: id is required and must be valid (use topicId from list operations)",
-          )
-        }
-        result = await setAside(id)
-        break
-      }
-      case "hey_reply_later": {
-        const id = validateId(args?.id)
-        if (!id) {
-          return errorResult(
-            "Error: id is required and must be valid (use topicId from list operations)",
-          )
-        }
-        result = await replyLater(id)
-        break
-      }
-      case "hey_unset_aside": {
-        const postingId = validateId(args?.posting_id)
-        if (!postingId) {
-          return errorResult(
-            "Error: posting_id is required and must be valid (use postingId from hey_list_set_aside)",
-          )
-        }
-        result = await removeFromSetAside(postingId)
-        break
-      }
-      case "hey_remove_reply_later": {
-        const postingId = validateId(args?.posting_id)
-        if (!postingId) {
-          return errorResult(
-            "Error: posting_id is required and must be valid (use postingId from hey_list_reply_later)",
-          )
-        }
-        result = await removeFromReplyLater(postingId)
-        break
-      }
-      case "hey_screen": {
-        const senderEmail = validateEmail(args?.sender_email)
-        const action = args?.action as string
-        const destination = args?.destination as
-          | "imbox"
-          | "feed"
-          | "paper_trail"
-          | undefined
-        if (!senderEmail) {
-          return errorResult(
-            "Error: sender_email is required and must be a valid email",
-          )
-        }
-        if (!action || !["approve", "reject"].includes(action)) {
-          return errorResult("Error: action is required (approve or reject)")
-        }
-        if (
-          destination &&
-          !["imbox", "feed", "paper_trail"].includes(destination)
-        ) {
-          return errorResult(
-            "Error: destination must be one of imbox, feed, paper_trail",
-          )
-        }
-        result =
-          action === "approve"
-            ? await screenIn(senderEmail, destination)
-            : await screenOut(senderEmail)
-        break
-      }
-      case "hey_screen_by_id": {
-        const clearanceId = validateId(args?.clearance_id)
-        const action = args?.action as string
-        const destination = args?.destination as
-          | "imbox"
-          | "feed"
-          | "paper_trail"
-          | undefined
-        if (!clearanceId) {
-          return errorResult(
-            "Error: clearance_id is required and must be valid",
-          )
-        }
-        if (!action || !["approve", "reject"].includes(action)) {
-          return errorResult("Error: action is required (approve or reject)")
-        }
-        if (
-          destination &&
-          !["imbox", "feed", "paper_trail"].includes(destination)
-        ) {
-          return errorResult(
-            "Error: destination must be one of imbox, feed, paper_trail",
-          )
-        }
-        result =
-          action === "approve"
-            ? await screenInById(clearanceId, destination)
-            : await screenOutById(clearanceId)
-        break
-      }
-      case "hey_set_status": {
-        const id = validateId(args?.id)
-        const action = args?.action as string
-        if (!id) {
-          return errorResult("Error: id is required and must be valid")
-        }
-        if (
-          !action ||
-          !["trash", "restore", "spam", "unspam"].includes(action)
-        ) {
-          return errorResult(
-            "Error: action is required (trash, restore, spam, or unspam)",
-          )
-        }
-        const statusFns: Record<string, (id: string) => Promise<unknown>> = {
-          trash: trashEmail,
-          restore: restoreFromTrash,
-          spam: markAsSpam,
-          unspam: markAsNotSpam,
-        }
-        result = await statusFns[action](id)
-        break
-      }
-      case "hey_move_to": {
-        const id = validateId(args?.id)
-        if (!id) {
-          return errorResult("Error: id is required and must be valid")
-        }
-        const destination = args?.destination as
-          | "imbox"
-          | "feed"
-          | "paper_trail"
-        if (
-          !destination ||
-          !["imbox", "feed", "paper_trail"].includes(destination)
-        ) {
-          return errorResult(
-            "Error: destination is required (imbox, feed, or paper_trail)",
-          )
-        }
-        result = await moveTo(id, destination)
-        break
-      }
-      case "hey_mark_unseen": {
-        const id = validateId(args?.id)
-        if (!id) {
-          return errorResult("Error: id is required and must be valid")
-        }
-        result = await markAsUnseen(id)
-        break
-      }
-      case "hey_mark_seen": {
-        const postingId =
-          args?.posting_id === undefined
-            ? undefined
-            : validateId(args?.posting_id)
-        if (args?.posting_id !== undefined && !postingId) {
-          return errorResult(
-            "Error: posting_id must be a valid ID string (omit it to mark the whole Imbox tray seen)",
-          )
-        }
-        result = postingId
-          ? await markPostingSeen(postingId)
-          : await markAllSeen()
-        break
-      }
-      case "hey_read_status": {
-        const id = validateId(args?.id)
-        const status = args?.status as "read" | "unread"
-        if (!id) {
-          return errorResult("Error: id is required and must be valid")
-        }
-        if (!status || !["read", "unread"].includes(status)) {
-          return errorResult("Error: status is required (read or unread)")
-        }
-        result =
-          status === "read" ? await markAsRead(id) : await markAsUnread(id)
-        break
-      }
-      case "hey_bubble_up": {
-        const topicId = validateId(args?.topic_id)
-        const slot = args?.slot as BubbleUpSlot
-        const date = args?.date as string | undefined
-        if (!topicId) {
-          return errorResult(
-            "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
-          )
-        }
-        const validSlots = [
-          "now",
-          "today",
-          "tomorrow",
-          "weekend",
-          "next_week",
-          "surprise_me",
-          "custom",
-        ]
-        if (!slot || !validSlots.includes(slot)) {
-          return errorResult(
-            "Error: slot is required and must be one of: now, today, tomorrow, weekend, next_week, surprise_me, custom",
-          )
-        }
-        result = await bubbleUp(topicId, slot, date)
-        break
-      }
-      case "hey_bubble_up_if_no_reply": {
-        const topicId = validateId(args?.topic_id)
-        const date = args?.date as string | undefined
-        if (!topicId) {
-          return errorResult(
-            "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
-          )
-        }
-        if (!date) {
-          return errorResult("Error: date is required (YYYY-MM-DD format)")
-        }
-        result = await bubbleUpIfNoReply(topicId, date)
-        break
-      }
-      case "hey_pop_bubble": {
-        const topicId = validateId(args?.topic_id)
-        if (!topicId) {
-          return errorResult(
-            "Error: topic_id is required and must be valid (use the topicId field from hey_list_* responses, not postingId)",
-          )
-        }
-        result = await popBubble(topicId)
-        break
-      }
-      case "hey_thread_mute": {
-        const postingId = validateId(args?.posting_id)
-        const action = args?.action as string
-        if (!postingId) {
-          return errorResult("Error: posting_id is required and must be valid")
-        }
-        if (!action || !["mute", "unmute"].includes(action)) {
-          return errorResult("Error: action is required (mute or unmute)")
-        }
-        result =
-          action === "mute"
-            ? await ignoreThread(postingId)
-            : await unignoreThread(postingId)
-        break
-      }
-
-      // Cache management
-      case "hey_cache_status": {
-        const folder = args?.folder as string | undefined
-        const stats = getCacheStats()
-        const unreadCount = getUnreadCount(folder)
-        const messageCount = getMessageCount(folder)
-
-        result = {
-          ...stats,
-          folder_stats: folder
-            ? {
-                folder,
-                message_count: messageCount,
-                unread_count: unreadCount,
-              }
-            : undefined,
-          global_unread: getUnreadCount(),
-        }
-        break
-      }
-
-      default:
-        return {
-          content: [{ type: "text", text: `Unknown tool: ${name}` }],
-          isError: true,
-        }
     }
+  })
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    }
-  } catch (error) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Error: ${sanitiseError(error)}`,
-        },
-      ],
-      isError: true,
-    }
-  }
-})
+  return server
+}
 
 async function main() {
   console.error("[mcp-hey] Starting Hey.com MCP server...")
@@ -1808,6 +1811,18 @@ async function main() {
     )
   }
 
+  // Handle graceful shutdown. stdin closing means the client has gone; without
+  // this the maintenance interval keeps an orphaned server alive. Registered
+  // before the session check, which can wait on the login webview.
+  const shutdown = () => {
+    console.error("[mcp-hey] Shutting down...")
+    closeDatabase()
+    process.exit(0)
+  }
+  process.on("SIGINT", shutdown)
+  process.on("SIGTERM", shutdown)
+  process.stdin.on("close", shutdown)
+
   // Validate session on startup
   try {
     await heyClient.ensureSession()
@@ -1821,7 +1836,7 @@ async function main() {
   }
 
   // Set up periodic maintenance
-  const maintenanceInterval = setInterval(
+  setInterval(
     () => {
       try {
         runMaintenance()
@@ -1832,24 +1847,9 @@ async function main() {
     5 * 60 * 1000,
   ) // Every 5 minutes
 
-  // Handle graceful shutdown
-  process.on("SIGINT", () => {
-    console.error("[mcp-hey] Shutting down...")
-    clearInterval(maintenanceInterval)
-    closeDatabase()
-    process.exit(0)
-  })
-
-  process.on("SIGTERM", () => {
-    console.error("[mcp-hey] Shutting down...")
-    clearInterval(maintenanceInterval)
-    closeDatabase()
-    process.exit(0)
-  })
-
-  // Start stdio transport
-  const transport = new StdioServerTransport()
-  await server.connect(transport)
+  // serveStdio picks the protocol era (2026-07-28 or 2025 initialize) from the
+  // opening message.
+  serveStdio(createServer)
 
   console.error("[mcp-hey] Server running on stdio transport")
 }
