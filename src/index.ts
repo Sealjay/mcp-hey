@@ -19,9 +19,9 @@ import { sanitiseError } from "./errors"
 import { heyClient } from "./hey-client"
 import { downloadAttachment, getCalendarInvite } from "./tools/attachments"
 import {
-  type BubbleUpSlot,
   addLabel,
   addToCollection,
+  type BubbleUpSlot,
   bubbleUp,
   bubbleUpIfNoReply,
   ignoreThread,

@@ -1,11 +1,11 @@
 import { parse as parseHtml } from "node-html-parser"
 import { HeyError } from "./errors"
 import {
-  type Session,
   ensureValidSession,
   getCookieHeader,
   loadSession,
   runAuthHelper,
+  type Session,
   validateAuthenticatedSession,
 } from "./session"
 
