@@ -1,12 +1,8 @@
 #!/usr/bin/env bun
-import { Server } from "@modelcontextprotocol/sdk/server/index.js"
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  type Tool,
-} from "@modelcontextprotocol/sdk/types.js"
+import { Server, type Tool } from "@modelcontextprotocol/server"
+import { serveStdio } from "@modelcontextprotocol/server/stdio"
 
+import pkg from "../package.json"
 import {
   closeDatabase,
   getCacheStats,
@@ -1163,7 +1159,7 @@ const tools: Tool[] = [
 const server = new Server(
   {
     name: "mcp-hey",
-    version: "0.5.0",
+    version: pkg.version,
   },
   {
     capabilities: {
@@ -1173,12 +1169,12 @@ const server = new Server(
 )
 
 // Handle list tools request
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+server.setRequestHandler("tools/list", async () => {
   return { tools }
 })
 
 // Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+server.setRequestHandler("tools/call", async (request) => {
   const { name, arguments: args } = request.params
 
   try {
@@ -1832,24 +1828,22 @@ async function main() {
     5 * 60 * 1000,
   ) // Every 5 minutes
 
-  // Handle graceful shutdown
-  process.on("SIGINT", () => {
+  // Handle graceful shutdown. stdin closing means the client has gone; without
+  // this the maintenance interval keeps an orphaned server alive.
+  const shutdown = () => {
     console.error("[mcp-hey] Shutting down...")
     clearInterval(maintenanceInterval)
     closeDatabase()
     process.exit(0)
-  })
+  }
+  process.on("SIGINT", shutdown)
+  process.on("SIGTERM", shutdown)
+  process.stdin.on("close", shutdown)
 
-  process.on("SIGTERM", () => {
-    console.error("[mcp-hey] Shutting down...")
-    clearInterval(maintenanceInterval)
-    closeDatabase()
-    process.exit(0)
-  })
-
-  // Start stdio transport
-  const transport = new StdioServerTransport()
-  await server.connect(transport)
+  // serveStdio picks the protocol era (2026-07-28 or 2025 initialize) from the
+  // opening message. stdio has one connection, so the one server instance is
+  // the whole factory.
+  serveStdio(() => server)
 
   console.error("[mcp-hey] Server running on stdio transport")
 }

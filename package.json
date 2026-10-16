@@ -1,6 +1,6 @@
 {
   "name": "mcp-hey",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": false,
   "license": "MIT",
   "author": {
@@ -18,8 +18,8 @@
     "format": "bunx --bun biome check --write ."
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.26.0",
-    "node-html-parser": "9.0.4"
+    "node-html-parser": "9.0.4",
+    "@modelcontextprotocol/server": "2.3.1"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
