@@ -711,7 +711,48 @@ This is the surface for blocking an **already-approved** sender. For senders pen
 
 > **Resolving an email to a contactId**: `GET /search?q={email}` includes a contacts row with `a.action-group__action--contacts[href="/contacts/{id}"]` (per the search section above). The MCP's `findContactIdByEmail` reuses this parser.
 
-> **Destination toggle**: The contact page also exposes sibling forms for "Imbox", "The Feed", and "Paper Trail" delivery destinations. These post a `contact_id` field rather than the path-style endpoint above. Not yet surfaced via the MCP.
+> **Destination toggle**: The contact page also exposes sibling forms for "Imbox", "The Feed", and "Paper Trail" delivery destinations. These post a `contact_id` field to `POST /boxes/{boxId}/designations` (below). Reading the current destination uses `GET /contacts/{contactId}/box_settings`.
+
+---
+
+#### GET /contacts/{contactId}/box_settings
+
+The contact page's "Change delivery settings" menu, loaded into `<turbo-frame id="contact_box_settings">`. It shows where Hey delivers this sender's mail.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `contactId` | string | path | Contact ID (see `findContactIdByEmail`) |
+
+**Response:** HTML. Under the heading "Deliver their emails to…", one button per destination with `role="menuitemradio"` and `data-bridge-group="deliver"`. The current destination has `aria-checked="true"` and `data-bridge-selected="true"`, and its wrapper has `action-group__item--selected`:
+
+| Button class | Destination |
+|--------------|-------------|
+| `action-group__action--imbox` | Imbox |
+| `action-group__action--feedbox` | The Feed |
+| `action-group__action--trailbox` | Paper Trail |
+| `action-group__action--screened-out` | Screened Out |
+
+A second group, `data-bridge-group="display"`, holds "Separately" and bundled display options and is not part of the destination.
+
+> Structure taken from a captured contact page (2026-10). Read by `src/contact-box.ts` for `sender_group` on tool output (`src/sender-groups.ts`). Answers are cached in `contact_boxes`: a setting for 30 days, "none" (not a contact, or nothing selected) for one day.
+
+---
+
+#### POST /boxes/{boxId}/designations
+
+Route a contact's future mail to a box. Posted by the non-selected destination buttons in the box settings menu.
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| `boxId` | string | path | Account-specific box ID (Feed or Paper Trail), as in `/postings/moves` |
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `contact_id` | string | Yes | Contact ID |
+
+> Documented from the captured form. Not used by the MCP.
 
 ---
 
@@ -1179,3 +1220,4 @@ When a session expires, requests return a 302 redirect to `/sign_in`. The mcp-he
 | 2026-07-12 | Added draft management: `POST /messages` with `entry[status]=drafted` (no `commit`) creates a draft and returns its ID via the `Location` header on a `204`; `POST /messages/{id}` with `_method=patch` and `entry[status]=drafted` edits it; `POST /entries/drafts/{id}` with `_method=delete` removes it permanently (no trash/restore). Verified live via Chrome network capture and a raw authenticated `fetch()`. Surfaced via new `hey_save_draft`, `hey_edit_draft`, `hey_delete_draft` MCP tools. |
 | 2026-07-12 | **Fix**: `hey_list_emails(folder="drafts")` was silently returning zero results — `extractEmailsFromHtml` only recognised `/topics/{id}` links for ID extraction, but draft rows carry no `data-identifier`/`data-entry-id` and no `/topics/` link, only `/messages/{id}/edit`. Added a message-ID fallback so drafts are no longer dropped. |
 | 2026-09-21 | Added `hey_list_emails(folder="sent")` reading `GET /sent` (confirmed as the send-success redirect target by the existing `classifyRedirect` check in `src/tools/send.ts`). Reuses the same `article.posting` row parser as every other folder. `from` is hardcoded to `"Me"` (always true for a sent item); the name/email the row markup actually surfaces is treated as the recipient and returned under `to`/`toEmail` instead, except when it's the literal placeholder `"Me"` (as seen on Drafts rows), in which case `to` is left unset rather than mislabelling a placeholder as a recipient. **Unverified live**: no Sent-page HTML was available to confirm the `.posting__detail` value is actually the recipient rather than another "Me" placeholder — treat `to`/`toEmail` accuracy as unconfirmed until checked against a real mailbox. |
+| 2026-10 | Documented `GET /contacts/{contactId}/box_settings` (current delivery destination, marked `aria-checked="true"` in the `deliver` group) and `POST /boxes/{boxId}/designations` (change it). The first backs `sender_group` on message results; lookups pair it with `GET /search?q={email}`, are budgeted per tool call and run at most 3 at a time. |

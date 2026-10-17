@@ -331,7 +331,7 @@ export async function screenOutById(
  * Find a contact ID for an already-approved sender by searching Hey for the
  * email address. Returns null if no contact matches.
  */
-async function findContactIdByEmail(
+export async function findContactIdByEmail(
   senderEmail: string,
 ): Promise<string | null> {
   const html = await heyClient.fetchHtml(
