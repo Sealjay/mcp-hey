@@ -525,7 +525,7 @@ const tools: Tool[] = [
     name: "hey_search",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "Search emails by query. Uses local FTS cache first, then network. Each result includes sender_group (see hey_list_emails); it is unknown when the sender address is not in the local cache, because Hey search results show only a name. Pass group to keep only results from senders delivered to those boxes. Use force_refresh for real-time results.",
+      "Search emails by query. Uses local FTS cache first, then network. Each result includes sender_group (see hey_list_emails); Hey's network results show only a sender name, so it is unknown unless the address is cached. Pass group to keep only results from senders delivered to those boxes; a filtered call reads threads to find missing addresses. Use force_refresh for real-time results.",
     inputSchema: {
       type: "object" as const,
       properties: {

@@ -7,6 +7,7 @@ Local MCP server giving Claude read/write access to Hey.com via reverse-engineer
 - **MCP server** (`src/index.ts`): Bun, TypeScript strict, `@modelcontextprotocol/server` v2 low-level `Server` with `tools/list` / `tools/call` handlers. `serveStdio` picks the protocol era (2026-07-28 or 2025 `initialize`) per connection. Exits when stdin closes.
 - **Auth helper** (`auth/hey-auth.py`): Python/pywebview, spawned on demand; writes session cookies to `data/hey-cookies.json` (mode 600).
 - **Cache** (`src/cache/`): SQLite for messages, threads and search.
+- **Sender groups** (`src/sender-groups.ts`, `src/contact-box.ts`, `src/sender-group-filter.ts`): `sender_group` on message results from each sender's Hey delivery setting, and the optional `group` filter. Lookups cost Hey requests, so by default only filtered calls make them.
 
 ## Commands
 

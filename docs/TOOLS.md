@@ -988,19 +988,19 @@ It describes the sender, not the message: a thread moved by hand, or mail from b
 
 | Field | Meaning |
 |-------|---------|
-| `mode` | `cache` or `on` (see below) |
+| `mode` | `filter` or `on` (see below) |
 | `unknown` | Messages whose sender group is still `unknown` |
 | `looked_up` | Senders looked up on Hey during this call |
-| `deferred` | Senders not looked up yet: over the budget, still running at the time limit, or `cache` mode. Later calls resolve them |
+| `deferred` | Senders not looked up in this call: lookups not allowed (unfiltered call in `filter` mode), over the budget, or still running at the time limit |
 
-**Settings:** `HEY_SENDER_GROUPS` = `off` (no field, output as before), `cache` (local cache only, no requests) or `on` (default: cache plus up to `HEY_SENDER_GROUP_BUDGET` lookups per call, default 10, at most 3 at a time, waiting at most `HEY_SENDER_GROUP_TIMEOUT_MS`, default 3000). A lookup is two requests and is cached for 30 days (one day for senders who are not contacts).
+**Settings:** `HEY_SENDER_GROUPS` = `off` (no field, output as before), `filter` (default: tag from the local cache; only a call that passes `group` looks senders up on Hey) or `on` (also look up up to 10 uncached senders on every call, waiting at most 3 s). A lookup is two requests, runs at most 3 at a time, does not start when Hey's rate-limit headroom is low, and is cached for 30 days (one day for senders who are not contacts).
 
 
 ### Filtering by sender group
 
 `hey_search`, `hey_list_set_aside`, `hey_list_reply_later`, `hey_list_label_emails` and `hey_list_collection_emails` take an optional `group`: one or more of `imbox`, `feed`, `paper_trail`, `screened_out`. Only emails whose `sender_group` is in the list are returned, for example `group: ["feed"]` on a label to find its newsletters.
 
-Senders not cached yet are looked up first, within the same per-call budget. Emails whose sender group is still `unknown` are left out but never silently: the output gets a `_group_filter` report.
+A filtered call looks up every sender on the page that is not cached yet (up to 100, waiting at most 10 s). Network `hey_search` results carry only a sender name, so for those the thread is read first to get the address (one request each, cached). Emails whose sender group is still `unknown` (not a contact, or out of time) are left out but never silently: the output gets a `_group_filter` report.
 
 ```json
 "_group_filter": {
@@ -1009,7 +1009,7 @@ Senders not cached yet are looked up first, within the same per-call budget. Ema
   "excluded": 9,
   "unclassified": 3,
   "unclassified_ids": ["1907289505", "1907289511", "1907289530"],
-  "note": "3 message(s) have no sender group yet and were left out. Calling again resolves more senders (a few per call); or read them by ID."
+  "note": "3 message(s) still have no sender group (the sender is not a contact, has no address, or the lookup ran out of time) and were left out. Calling again resolves more; or read them by ID."
 }
 ```
 
@@ -1022,7 +1022,7 @@ Senders not cached yet are looked up first, within the same per-call budget. Ema
 
 Notes:
 - The filter applies to the page that was fetched: `limit` counts emails before filtering, so a filtered result can hold fewer than `limit` emails.
-- `group` is refused when `HEY_SENDER_GROUPS=off`. In `cache` mode it filters on cached answers only.
+- `group` is refused when `HEY_SENDER_GROUPS=off`.
 - `hey_list_emails` has no `group`: its `imbox`, `feed` and `paper_trail` views are already scoped to one box, and the same box and delivery setting usually agree. To find, say, Feed senders whose mail sits in the Imbox, list the Imbox and read `sender_group`.
 - `hey_imbox_summary` and `hey_list_screener` have no `group` either: the summary is an overview, and Screener senders are not contacts yet, so they have no group.
 ---

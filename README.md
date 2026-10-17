@@ -64,6 +64,12 @@ Use absolute paths. GUI apps often lack your shell's PATH, so if you see `spawn 
 | Screener | `hey_screen`, `hey_screen_by_id` |
 | Search & cache | `hey_search`, `hey_cache_status` |
 
+## Sender groups
+
+Every message a tool returns carries `sender_group`: where Hey delivers new mail from that sender (`imbox`, `feed`, `paper_trail`, `screened_out`, else `unknown`), from the "Deliver their emails to…" setting on their contact page. It describes the sender, not the message.
+
+`hey_search`, `hey_list_set_aside`, `hey_list_reply_later`, `hey_list_label_emails` and `hey_list_collection_emails` take an optional `group`, for example `group: ["imbox"]` to leave out newsletters and receipts. By default (`HEY_SENDER_GROUPS=filter`) tools tag from the local cache and only a filtered call asks Hey; `on` looks up a few senders on every call, `off` removes the field. Details: [`docs/TOOLS.md`](docs/TOOLS.md#filtering-by-sender-group).
+
 ## Architecture
 
 | Component | Description |
