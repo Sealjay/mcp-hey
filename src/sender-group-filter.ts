@@ -73,7 +73,6 @@ type Tagged = { sender_group?: SenderGroup; topicId?: string; id?: string }
 export function applyGroupFilter(
   result: unknown,
   groups: FilterGroup[],
-  mode: SenderGroupMode,
 ): unknown {
   if (!result || typeof result !== "object") return result
   const data = (result as { data?: unknown }).data
@@ -105,10 +104,7 @@ export function applyGroupFilter(
   }
   if (unclassified > 0) {
     report.unclassified_ids = unclassifiedIds
-    report.note =
-      mode === "on"
-        ? `${unclassified} message(s) have no sender group yet and were left out. Calling again resolves more senders (a few per call); or read them by ID.`
-        : `${unclassified} message(s) have no sender group in the local cache and were left out. Set HEY_SENDER_GROUPS=on to look senders up, or read them by ID.`
+    report.note = `${unclassified} message(s) still have no sender group (the sender is not a contact, has no address, or the lookup ran out of time) and were left out. Calling again resolves more; or read them by ID.`
   }
   return { ...(result as object), data: kept, _group_filter: report }
 }
@@ -133,7 +129,7 @@ export function groupFilterFor(
   if (mode === "off") {
     return {
       error:
-        "Error: group filtering needs sender groups, but HEY_SENDER_GROUPS is off. Set it to cache or on.",
+        "Error: group filtering needs sender groups, but HEY_SENDER_GROUPS is off. Set it to filter or on.",
     }
   }
   return { groups }

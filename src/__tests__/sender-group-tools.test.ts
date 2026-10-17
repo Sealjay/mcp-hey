@@ -62,7 +62,7 @@ const resolver = {
   },
 }
 const opts = {
-  settings: settings("cache"),
+  settings: settings("filter"),
   resolver,
   senderAddress: () => undefined,
 }

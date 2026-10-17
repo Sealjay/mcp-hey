@@ -58,11 +58,7 @@ describe("applyGroupFilter", () => {
   })
 
   test("keeps matching messages and reports the rest", () => {
-    const out = applyGroupFilter(
-      tagged(),
-      ["imbox", "paper_trail"],
-      "on",
-    ) as Out
+    const out = applyGroupFilter(tagged(), ["imbox", "paper_trail"]) as Out
     expect(out.data.map((e) => e.id)).toEqual(["1", "4"])
     expect(out._cache).toEqual({ source: "cache" })
     expect(out._group_filter).toMatchObject({
@@ -75,16 +71,10 @@ describe("applyGroupFilter", () => {
     expect(out._group_filter.note).toContain("Calling again")
   })
 
-  test("in cache mode the note says how to enable lookups", () => {
-    const out = applyGroupFilter(tagged(), ["feed"], "cache") as Out
-    expect(out._group_filter.note).toContain("HEY_SENDER_GROUPS=on")
-  })
-
   test("no note when every message is classified", () => {
     const out = applyGroupFilter(
       { data: [email("1", "a@example.org", "feed")] },
       ["feed"],
-      "on",
     ) as Out
     expect(out._group_filter).toEqual({
       groups: ["feed"],
@@ -96,14 +86,14 @@ describe("applyGroupFilter", () => {
 
   test("lists at most 20 unclassified IDs", () => {
     const data = Array.from({ length: 30 }, (_, i) => email(String(i)))
-    const out = applyGroupFilter({ data }, ["imbox"], "on") as Out
+    const out = applyGroupFilter({ data }, ["imbox"]) as Out
     expect(out._group_filter.unclassified).toBe(30)
     expect(out._group_filter.unclassified_ids).toHaveLength(20)
   })
 
   test("unexpected shapes are returned unchanged", () => {
     const odd = { data: { emails: [] } }
-    expect(applyGroupFilter(odd, ["imbox"], "on")).toBe(odd)
+    expect(applyGroupFilter(odd, ["imbox"])).toBe(odd)
   })
 })
 
@@ -134,7 +124,7 @@ describe("filtering after tagging", () => {
       senderAddress: () => undefined,
       headroom: () => 100,
     })
-    const out = applyGroupFilter(tagged, ["feed"], "on") as Out
+    const out = applyGroupFilter(tagged, ["feed"]) as Out
     expect(lookups).toHaveLength(2)
     expect(out.data.map((e) => e.id)).toEqual(["0"])
     expect(out._group_filter).toMatchObject({
@@ -151,7 +141,7 @@ describe("tool schemas", () => {
     const source = readFileSync(join(import.meta.dir, "..", "index.ts"), "utf8")
     const blocks = source.split(/\n\s{2}\{\n\s{4}name: "/).slice(1)
     const withGroup = blocks
-      .filter((b) => /\n\s{8}group: \{/.test(b))
+      .filter((b) => /\n\s{8}group: GROUP_FILTER_PROPERTY,/.test(b))
       .map((b) => b.slice(0, b.indexOf('"')))
     expect(withGroup.sort()).toEqual([...GROUP_FILTER_TOOLS].sort())
     expect(withGroup).not.toContain("hey_list_emails")
@@ -171,7 +161,7 @@ describe("groupFilterFor", () => {
       groupFilterFor(
         "hey_list_set_aside",
         { group: ["feed", "imbox"] },
-        "cache",
+        "filter",
       ),
     ).toEqual({
       groups: ["feed", "imbox"],
@@ -185,5 +175,76 @@ describe("groupFilterFor", () => {
     expect(
       groupFilterFor("hey_search", { group: ["feed"] }, "off").error,
     ).toContain("HEY_SENDER_GROUPS is off")
+  })
+})
+
+describe("lookups are opt-in through the filter", () => {
+  const senders = Array.from({ length: 15 }, (_, i) => `s${i}@example.org`)
+  const page = () => ({
+    data: senders.map((s, i) => email(String(i), s)),
+    _cache: {},
+  })
+  const counting = () => {
+    const lookups: string[] = []
+    return {
+      lookups,
+      resolver: {
+        cached: () => null,
+        lookup: async (s: string): Promise<ContactBoxAnswer> => {
+          lookups.push(s)
+          return "feed"
+        },
+      },
+    }
+  }
+
+  test("default mode makes no requests when the call does not filter", async () => {
+    const { lookups, resolver } = counting()
+    await withSenderGroups("hey_search", page(), {
+      settings: DEFAULT_SETTINGS,
+      resolver,
+      senderAddress: () => undefined,
+      fetchSenderAddress: async () => "x@example.org",
+      headroom: () => 100,
+    })
+    expect(lookups).toHaveLength(0)
+  })
+
+  test("a filtered call looks up every sender on the page, past the per-call budget", async () => {
+    const { lookups, resolver } = counting()
+    const tagged = await withSenderGroups("hey_search", page(), {
+      settings: DEFAULT_SETTINGS,
+      filtering: true,
+      resolver,
+      senderAddress: () => undefined,
+      headroom: () => 100,
+    })
+    const out = applyGroupFilter(tagged, ["feed"]) as Out
+    expect(lookups).toHaveLength(15)
+    expect(out.data).toHaveLength(15)
+    expect(out._group_filter.unclassified).toBe(0)
+  })
+
+  test("a filtered search reads the thread for results with no sender address", async () => {
+    const { lookups, resolver } = counting()
+    const fetched: string[] = []
+    const result = {
+      data: [{ id: "t1", topicId: "t1" }, email("2", "known@example.org")],
+    }
+    const tagged = await withSenderGroups("hey_search", result, {
+      settings: DEFAULT_SETTINGS,
+      filtering: true,
+      resolver,
+      senderAddress: () => undefined,
+      fetchSenderAddress: async (item) => {
+        fetched.push(item.topicId as string)
+        return "Thread@Example.org"
+      },
+      headroom: () => 100,
+    })
+    expect(fetched).toEqual(["t1"])
+    expect(lookups.sort()).toEqual(["known@example.org", "thread@example.org"])
+    const out = applyGroupFilter(tagged, ["feed"]) as Out
+    expect(out.data).toHaveLength(2)
   })
 })

@@ -13,7 +13,11 @@ import {
 } from "./cache"
 import { sanitiseError } from "./errors"
 import { heyClient } from "./hey-client"
-import { applyGroupFilter, groupFilterFor } from "./sender-group-filter"
+import {
+  applyGroupFilter,
+  FILTER_GROUPS,
+  groupFilterFor,
+} from "./sender-group-filter"
 import { senderGroupSettings, withSenderGroups } from "./sender-groups"
 import { downloadAttachment, getCalendarInvite } from "./tools/attachments"
 import {
@@ -176,6 +180,17 @@ function errorResult(text: string): {
 }
 
 // Tool definitions
+/** The optional `group` argument on tools that filter by sender group. */
+const GROUP_FILTER_PROPERTY = {
+  type: "array",
+  items: {
+    type: "string",
+    enum: [...FILTER_GROUPS],
+  },
+  description:
+    "Optional: keep only emails whose sender_group (the sender's current Hey delivery setting) is one of these. Senders not yet known are looked up on Hey for this call; emails whose group is still unknown are left out and counted in _group_filter (unclassified, unclassified_ids). Default: no filter.",
+}
+
 const tools: Tool[] = [
   // Reading tools
   {
@@ -244,15 +259,7 @@ const tools: Tool[] = [
           type: "boolean",
           description: "Bypass cache and fetch fresh data (default: false)",
         },
-        group: {
-          type: "array",
-          items: {
-            type: "string",
-            enum: ["imbox", "feed", "paper_trail", "screened_out"],
-          },
-          description:
-            "Optional: keep only emails whose sender_group (the sender's current Hey delivery setting) is one of these. Emails whose sender group is still unknown are left out and counted in _group_filter (unclassified, unclassified_ids). Default: no filter.",
-        },
+        group: GROUP_FILTER_PROPERTY,
       },
     },
   },
@@ -268,15 +275,7 @@ const tools: Tool[] = [
           type: "boolean",
           description: "Bypass cache and fetch fresh data (default: false)",
         },
-        group: {
-          type: "array",
-          items: {
-            type: "string",
-            enum: ["imbox", "feed", "paper_trail", "screened_out"],
-          },
-          description:
-            "Optional: keep only emails whose sender_group (the sender's current Hey delivery setting) is one of these. Emails whose sender group is still unknown are left out and counted in _group_filter (unclassified, unclassified_ids). Default: no filter.",
-        },
+        group: GROUP_FILTER_PROPERTY,
       },
     },
   },
@@ -331,15 +330,7 @@ const tools: Tool[] = [
           type: "boolean",
           description: "Bypass cache and fetch fresh data (default: false)",
         },
-        group: {
-          type: "array",
-          items: {
-            type: "string",
-            enum: ["imbox", "feed", "paper_trail", "screened_out"],
-          },
-          description:
-            "Optional: keep only emails whose sender_group (the sender's current Hey delivery setting) is one of these. Emails whose sender group is still unknown are left out and counted in _group_filter (unclassified, unclassified_ids). Default: no filter.",
-        },
+        group: GROUP_FILTER_PROPERTY,
       },
       required: ["label_id"],
     },
@@ -380,15 +371,7 @@ const tools: Tool[] = [
           type: "boolean",
           description: "Bypass cache and fetch fresh data (default: false)",
         },
-        group: {
-          type: "array",
-          items: {
-            type: "string",
-            enum: ["imbox", "feed", "paper_trail", "screened_out"],
-          },
-          description:
-            "Optional: keep only emails whose sender_group (the sender's current Hey delivery setting) is one of these. Emails whose sender group is still unknown are left out and counted in _group_filter (unclassified, unclassified_ids). Default: no filter.",
-        },
+        group: GROUP_FILTER_PROPERTY,
       },
       required: ["collection_id"],
     },
@@ -558,15 +541,7 @@ const tools: Tool[] = [
           type: "boolean",
           description: "Bypass cache and search via network (default: false)",
         },
-        group: {
-          type: "array",
-          items: {
-            type: "string",
-            enum: ["imbox", "feed", "paper_trail", "screened_out"],
-          },
-          description:
-            "Optional: keep only emails whose sender_group (the sender's current Hey delivery setting) is one of these. Emails whose sender group is still unknown are left out and counted in _group_filter (unclassified, unclassified_ids). Default: no filter.",
-        },
+        group: GROUP_FILTER_PROPERTY,
       },
       required: ["query"],
     },
@@ -1826,7 +1801,9 @@ function createServer(): Server {
 
       // Add each message's sender group. Never fails the tool call.
       try {
-        result = await withSenderGroups(name, result)
+        result = await withSenderGroups(name, result, {
+          filtering: filter.groups !== undefined,
+        })
       } catch (error) {
         console.error(
           "[mcp-hey] Could not add sender groups:",
@@ -1834,11 +1811,7 @@ function createServer(): Server {
         )
       }
       if (filter.groups) {
-        result = applyGroupFilter(
-          result,
-          filter.groups,
-          senderGroupSettings().mode,
-        )
+        result = applyGroupFilter(result, filter.groups)
       }
 
       return {

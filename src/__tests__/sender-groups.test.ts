@@ -47,16 +47,13 @@ function fakeResolver(
 }
 
 describe("senderGroupSettings", () => {
-  test("defaults and bounds", () => {
+  test("defaults to filter; only the mode is configurable", () => {
     expect(senderGroupSettings({})).toEqual(DEFAULT_SETTINGS)
-    const s = senderGroupSettings({
-      HEY_SENDER_GROUPS: "CACHE",
-      HEY_SENDER_GROUP_BUDGET: "500",
-      HEY_SENDER_GROUP_TIMEOUT_MS: "-5",
+    expect(DEFAULT_SETTINGS.mode).toBe("filter")
+    expect(senderGroupSettings({ HEY_SENDER_GROUPS: "ON" })).toEqual({
+      ...DEFAULT_SETTINGS,
+      mode: "on",
     })
-    expect(s.mode).toBe("cache")
-    expect(s.budget).toBe(50)
-    expect(s.timeoutMs).toBe(0)
   })
 
   test("an unknown mode falls back to the default", () => {
@@ -107,7 +104,7 @@ describe("resolveSenderGroups", () => {
   test("cache mode never looks up", async () => {
     const { resolver, stats } = fakeResolver({}, { "a@example.org": "imbox" })
     const r = await resolveSenderGroups(["a@example.org"], {
-      settings: on({ mode: "cache" }),
+      settings: on({ mode: "filter" }),
       resolver,
       headroom: () => 100,
     })
@@ -208,7 +205,7 @@ describe("tagSenderGroups", () => {
       "news@example.net": "feed",
     })
     const { items: tagged, summary } = await tagSenderGroups(items, {
-      settings: on({ mode: "cache" }),
+      settings: on({ mode: "filter" }),
       resolver,
       senderAddress: (item) =>
         item.id === "2" ? "news@example.net" : undefined,
@@ -219,7 +216,7 @@ describe("tagSenderGroups", () => {
       "unknown",
     ])
     expect(summary).toEqual({
-      mode: "cache",
+      mode: "filter",
       unknown: 1,
       looked_up: 0,
       deferred: 1,
