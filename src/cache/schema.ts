@@ -3,7 +3,7 @@
  * Separates lightweight metadata from full content for fast queries.
  */
 
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 export const INIT_SCHEMA = `
 -- Pragma settings for optimal caching performance
@@ -75,6 +75,15 @@ CREATE TABLE IF NOT EXISTS search_cache (
     result_count INTEGER NOT NULL,
     cached_at INTEGER NOT NULL,
     ttl_seconds INTEGER DEFAULT 60
+);
+
+-- Where Hey delivers each sender's mail (contact page "Deliver their emails to"),
+-- used for sender groups. One row per lowercased address; box "none" means
+-- not a contact or no setting marked.
+CREATE TABLE IF NOT EXISTS contact_boxes (
+    sender_email TEXT PRIMARY KEY,
+    box TEXT NOT NULL,
+    checked_at INTEGER NOT NULL
 );
 
 -- Folder HTML cache (for re-parsing summaries without network fetch)

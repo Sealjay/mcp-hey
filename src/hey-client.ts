@@ -95,6 +95,19 @@ async function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Requests left in the current rate-limit window: Hey's last
+ * `x-ratelimit-remaining`, minus requests made since (an estimate). Optional
+ * background work, such as sender group lookups, checks this before starting.
+ */
+export function rateLimitHeadroom(): number {
+  const now = Date.now()
+  if (rateLimiter.quotaResetTime > 0 && now > rateLimiter.quotaResetTime) {
+    return 100
+  }
+  return rateLimiter.remainingQuota
+}
+
+/**
  * Proactive rate limiting - waits if we're approaching limits.
  */
 async function waitForRateLimit(): Promise<void> {

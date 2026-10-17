@@ -331,38 +331,40 @@ export async function screenOutById(
  * Find a contact ID for an already-approved sender by searching Hey for the
  * email address. Returns null if no contact matches.
  */
-async function findContactIdByEmail(
+export async function findContactIdByEmail(
   senderEmail: string,
 ): Promise<string | null> {
   const html = await heyClient.fetchHtml(
     `/search?q=${encodeURIComponent(senderEmail)}`,
   )
+  return contactIdFromSearchHtml(html, senderEmail)
+}
+
+/**
+ * The contact id in Hey search results whose link shows exactly this address.
+ * Exact, not substring: searching bob@x.com must not pick jimbob@x.com.
+ * Prefers the dedicated contacts row, then any /contacts/{id} link.
+ */
+export function contactIdFromSearchHtml(
+  html: string,
+  senderEmail: string,
+): string | null {
   const root = parseHtml(html)
-  const needle = senderEmail.toLowerCase()
-
-  // Prefer the search result's dedicated contacts row.
-  const contactsLinks = root.querySelectorAll(
+  const needle = senderEmail.trim().toLowerCase()
+  for (const selector of [
     "a.action-group__action--contacts[href*='/contacts/']",
-  )
-  for (const link of contactsLinks) {
-    if (link.text.toLowerCase().includes(needle)) {
-      const href = link.getAttribute("href")
-      const match = href?.match(/\/contacts\/(\d+)/)
+    "a[href*='/contacts/']",
+  ]) {
+    for (const link of root.querySelectorAll(selector)) {
+      const addresses = link.text
+        .toLowerCase()
+        .match(/[^\s<>()"',;:]+@[^\s<>()"',;:]+/g)
+        ?.map((a) => a.replace(/\.+$/, ""))
+      if (!addresses?.includes(needle)) continue
+      const match = link.getAttribute("href")?.match(/\/contacts\/(\d+)/)
       if (match) return match[1]
     }
   }
-
-  // Fall back to any /contacts/{id} anchor whose visible text includes the
-  // email (covers search-page variants).
-  const anyContact = root.querySelectorAll("a[href*='/contacts/']")
-  for (const link of anyContact) {
-    if (link.text.toLowerCase().includes(needle)) {
-      const href = link.getAttribute("href")
-      const match = href?.match(/\/contacts\/(\d+)/)
-      if (match) return match[1]
-    }
-  }
-
   return null
 }
 

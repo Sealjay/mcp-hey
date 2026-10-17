@@ -84,6 +84,8 @@ Tool definitions and parameters live in [`TOOLS.md`](TOOLS.md). Endpoint details
 | Screen Out (by email) | Screener / Contact page | `hey_screen` (action=reject) | Implemented — works for pending screener entries AND already-approved senders (via contact-page fallback) |
 | Screen Out (by clearance ID) | Screener | `hey_screen_by_id` (action=reject) | Implemented (screener entries only — for already-approved senders use `hey_screen` by email) |
 | Clear All Screener | Clear all… | — | Not implemented |
+| Read a sender's delivery setting | Contact page > Deliver their emails to… | `sender_group` on every message result (read only) | Implemented |
+| Filter results by sender's delivery setting | (derived) | `group` on `hey_search`, `hey_list_set_aside`, `hey_list_reply_later`, `hey_list_label_emails`, `hey_list_collection_emails` | Implemented |
 
 ## Labels & Collections
 

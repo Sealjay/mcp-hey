@@ -13,6 +13,7 @@ This document provides detailed documentation for all MCP tools provided by mcp-
 - [Sending Tools](#sending-tools) (6 tools)
 - [Organisation Tools](#organisation-tools) (17 tools)
 - [Cache Management](#cache-management) (1 tool)
+- [Sender Groups](#sender-groups)
 - [Error Handling](#error-handling)
 
 ---
@@ -60,7 +61,8 @@ List emails in a Hey.com folder/view. Returns cached results unless force_refres
       "date": "2024-01-15T10:30:00Z",
       "unread": true,
       "bubbledUp": false,
-      "label": "Work"
+      "label": "Work",
+      "sender_group": "imbox"
     }
   ],
   "_cache": {
@@ -69,9 +71,12 @@ List emails in a Hey.com folder/view. Returns cached results unless force_refres
     "age_seconds": 300,
     "is_stale": false,
     "hint": "Cached 5 minutes ago"
-  }
+  },
+  "_sender_groups": { "mode": "on", "unknown": 0, "looked_up": 1, "deferred": 0 }
 }
 ```
+
+`sender_group` is the sender's current Hey delivery setting, not necessarily the box this email is in. See [Sender Groups](#sender-groups).
 
 ---
 
@@ -108,6 +113,7 @@ List emails in the Set Aside stack (emails saved for later).
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | force_refresh | boolean | No | false | Bypass cache and fetch fresh data |
+| group | string[] | No | - | Keep only emails whose `sender_group` is one of `imbox`, `feed`, `paper_trail`, `screened_out`. See [Filtering by sender group](#filtering-by-sender-group) |
 
 **Returns:** Same structure as `hey_list_imbox`
 
@@ -121,6 +127,7 @@ List emails in the Reply Later stack (emails pending response).
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | force_refresh | boolean | No | false | Bypass cache and fetch fresh data |
+| group | string[] | No | - | Keep only emails whose `sender_group` is one of `imbox`, `feed`, `paper_trail`, `screened_out`. See [Filtering by sender group](#filtering-by-sender-group) |
 
 **Returns:** Same structure as `hey_list_imbox`
 
@@ -188,6 +195,7 @@ List emails with a specific label.
 | limit | number | No | 25 | Maximum number of emails to return (1-100) |
 | page | number | No | 1 | Page number for pagination |
 | force_refresh | boolean | No | false | Bypass cache and fetch fresh data |
+| group | string[] | No | - | Keep only emails whose `sender_group` is one of `imbox`, `feed`, `paper_trail`, `screened_out`. See [Filtering by sender group](#filtering-by-sender-group) |
 
 **Returns:** Same structure as `hey_list_imbox`
 
@@ -226,6 +234,7 @@ List emails in a specific collection.
 | limit | number | No | 25 | Maximum number of emails to return (1-100) |
 | page | number | No | 1 | Page number for pagination |
 | force_refresh | boolean | No | false | Bypass cache and fetch fresh data |
+| group | string[] | No | - | Keep only emails whose `sender_group` is one of `imbox`, `feed`, `paper_trail`, `screened_out`. See [Filtering by sender group](#filtering-by-sender-group) |
 
 **Returns:** Same structure as `hey_list_imbox`
 
@@ -256,6 +265,7 @@ parsed calendar invites alongside the body.
     "body": "<p>Hi, just wanted to confirm...</p>",
     "date": "2024-01-15T10:30:00Z",
     "threadId": "67890",
+    "sender_group": "imbox",
     "attachments": [
       { "id": "part-1", "filename": "agenda.pdf", "size": 12480, "mime": "application/pdf", "is_calendar": false },
       { "id": "part-2", "filename": "invite.ics", "size": 1842, "mime": "text/calendar", "is_calendar": true }
@@ -267,6 +277,9 @@ parsed calendar invites alongside the body.
   "_cache": {...}
 }
 ```
+
+> **Sender groups**: the thread and each item in `entries` carry
+> `sender_group` for their own sender. See [Sender Groups](#sender-groups).
 
 > **Attachments are metadata-only**. Use `hey_download_attachment` to write
 > the bytes to disk or `hey_get_calendar_invite` to fetch the parsed invite.
@@ -343,6 +356,7 @@ Search emails by query. Uses local FTS cache first for speed, then network for f
 | query | string | **Yes** | - | Search query (1-500 characters) |
 | limit | number | No | 25 | Maximum number of results (1-100) |
 | force_refresh | boolean | No | false | Bypass cache and search via network |
+| group | string[] | No | - | Keep only emails whose `sender_group` is one of `imbox`, `feed`, `paper_trail`, `screened_out`. See [Filtering by sender group](#filtering-by-sender-group) |
 
 **Returns:**
 ```json
@@ -368,6 +382,8 @@ Search emails by query. Uses local FTS cache first for speed, then network for f
 ```
 
 > **Note**: Network search results include `topicId`, `entryId`, subject, sender name, and date. Unlike folder listings, network search results do not include `postingId`, `fromEmail`, `snippet`, `unread`, or `bubbledUp` fields (Hey.com's search page uses a compact result format). FTS cache results may include additional fields if the emails were previously cached from folder listings.
+>
+> Each result carries `sender_group`. Because network results have no sender address, it is taken from the local cache by thread ID, and is `unknown` when the thread was never listed or read before.
 
 ---
 
@@ -950,6 +966,65 @@ Check cache freshness and statistics.
 }
 ```
 
+---
+
+## Sender Groups
+
+Every tool that returns messages adds `sender_group` to each one: where Hey delivers new mail from that sender today, as set on the sender's contact page ("Deliver their emails to…").
+
+| Value | Meaning |
+|-------|---------|
+| `imbox` | The sender's mail goes to the Imbox |
+| `feed` | The Feed |
+| `paper_trail` | Paper Trail |
+| `screened_out` | The sender is screened out |
+| `unknown` | Not known yet, not a contact, or no sender address |
+
+It describes the sender, not the message: a thread moved by hand, or mail from before the setting changed, can sit in another box.
+
+**Tools:** `hey_list_emails`, `hey_imbox_summary` (`emails` and `bubbledUpEmails`), `hey_list_set_aside`, `hey_list_reply_later`, `hey_list_screener` (cache only), `hey_list_label_emails`, `hey_list_collection_emails`, `hey_search`, `hey_read_email` (the thread and each entry).
+
+**Summary:** these tools also return `_sender_groups` next to `_cache`:
+
+| Field | Meaning |
+|-------|---------|
+| `mode` | `filter` or `on` (see below) |
+| `unknown` | Messages whose sender group is still `unknown` |
+| `looked_up` | Senders looked up on Hey during this call |
+| `deferred` | Senders not looked up in this call: lookups not allowed (unfiltered call in `filter` mode), over the budget, or still running at the time limit |
+
+**Settings:** `HEY_SENDER_GROUPS` = `off` (no field, output as before), `filter` (default: tag from the local cache; only a call that passes `group` looks senders up on Hey) or `on` (also look up up to 10 uncached senders on every call, waiting at most 3 s). A lookup is two requests, runs at most 3 at a time, does not start when Hey's rate-limit headroom is low, and is cached for 30 days (one day for senders who are not contacts).
+
+
+### Filtering by sender group
+
+`hey_search`, `hey_list_set_aside`, `hey_list_reply_later`, `hey_list_label_emails` and `hey_list_collection_emails` take an optional `group`: one or more of `imbox`, `feed`, `paper_trail`, `screened_out`. Only emails whose `sender_group` is in the list are returned, for example `group: ["feed"]` on a label to find its newsletters.
+
+A filtered call looks up every sender on the page that is not cached yet (up to 100, waiting at most 10 s). Network `hey_search` results carry only a sender name, so for those the thread is read first to get the address (one request each, cached). Emails whose sender group is still `unknown` (not a contact, or out of time) are left out but never silently: the output gets a `_group_filter` report.
+
+```json
+"_group_filter": {
+  "groups": ["feed"],
+  "matched": 4,
+  "excluded": 9,
+  "unclassified": 3,
+  "unclassified_ids": ["1907289505", "1907289511", "1907289530"],
+  "note": "3 message(s) still have no sender group (the sender is not a contact, has no address, or the lookup ran out of time) and were left out. Calling again resolves more; or read them by ID."
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `matched` | Emails returned |
+| `excluded` | Emails from senders in another group |
+| `unclassified` | Emails whose sender group is still `unknown`, left out |
+| `unclassified_ids` | Their topic IDs (at most 20), for `hey_read_email` |
+
+Notes:
+- The filter applies to the page that was fetched: `limit` counts emails before filtering, so a filtered result can hold fewer than `limit` emails.
+- `group` is refused when `HEY_SENDER_GROUPS=off`.
+- `hey_list_emails` has no `group`: its `imbox`, `feed` and `paper_trail` views are already scoped to one box, and the same box and delivery setting usually agree. To find, say, Feed senders whose mail sits in the Imbox, list the Imbox and read `sender_group`.
+- `hey_imbox_summary` and `hey_list_screener` have no `group` either: the summary is an overview, and Screener senders are not contacts yet, so they have no group.
 ---
 
 ## Error Handling

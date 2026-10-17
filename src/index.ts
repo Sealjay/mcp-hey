@@ -13,6 +13,12 @@ import {
 } from "./cache"
 import { sanitiseError } from "./errors"
 import { heyClient } from "./hey-client"
+import {
+  applyGroupFilter,
+  FILTER_GROUPS,
+  groupFilterFor,
+} from "./sender-group-filter"
+import { senderGroupSettings, withSenderGroups } from "./sender-groups"
 import { downloadAttachment, getCalendarInvite } from "./tools/attachments"
 import {
   addLabel,
@@ -174,13 +180,24 @@ function errorResult(text: string): {
 }
 
 // Tool definitions
+/** The optional `group` argument on tools that filter by sender group. */
+const GROUP_FILTER_PROPERTY = {
+  type: "array",
+  items: {
+    type: "string",
+    enum: [...FILTER_GROUPS],
+  },
+  description:
+    "Optional: keep only emails whose sender_group (the sender's current Hey delivery setting) is one of these. Senders not yet known are looked up on Hey for this call; emails whose group is still unknown are left out and counted in _group_filter (unclassified, unclassified_ids). Default: no filter.",
+}
+
 const tools: Tool[] = [
   // Reading tools
   {
     name: "hey_list_emails",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      'List emails in a Hey.com folder/view. Returns cached results unless force_refresh=true. Each email includes id, topicId, postingId, entryId, from, subject, date, and unread status. For folder=sent, from is always "Me" and the recipient (unverified against a live Sent page) is under to/toEmail instead.',
+      'List emails in a Hey.com folder/view. Returns cached results unless force_refresh=true. Each email includes id, topicId, postingId, entryId, from, subject, date, unread status, and sender_group (the sender\'s current Hey delivery setting: imbox, feed, paper_trail, screened_out or unknown — not necessarily the box this email is in). For folder=sent, from is always "Me" and the recipient (unverified against a live Sent page) is under to/toEmail instead.',
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -219,7 +236,7 @@ const tools: Tool[] = [
     name: "hey_imbox_summary",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "Get a complete Imbox summary including screener count, bubbled up emails, and new emails. Use this for a comprehensive view of the inbox state.",
+      "Get a complete Imbox summary including screener count, bubbled up emails, and new emails. Each email includes sender_group (see hey_list_emails). Use this for a comprehensive view of the inbox state.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -234,7 +251,7 @@ const tools: Tool[] = [
     name: "hey_list_set_aside",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "List emails currently in the Set Aside stack. Returns cached results (same shape as hey_list_emails) unless force_refresh=true. Use hey_unset_aside with the returned postingId to remove an item.",
+      "List emails currently in the Set Aside stack. Returns cached results (same shape as hey_list_emails) unless force_refresh=true; pass group to keep only emails from senders delivered to those boxes. Use hey_unset_aside with the returned postingId to remove an item.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -242,6 +259,7 @@ const tools: Tool[] = [
           type: "boolean",
           description: "Bypass cache and fetch fresh data (default: false)",
         },
+        group: GROUP_FILTER_PROPERTY,
       },
     },
   },
@@ -249,7 +267,7 @@ const tools: Tool[] = [
     name: "hey_list_reply_later",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "List emails currently in the Reply Later stack. Returns cached results (same shape as hey_list_emails) unless force_refresh=true. Use hey_remove_reply_later with the returned postingId to remove an item.",
+      "List emails currently in the Reply Later stack. Returns cached results (same shape as hey_list_emails) unless force_refresh=true; pass group to keep only emails from senders delivered to those boxes. Use hey_remove_reply_later with the returned postingId to remove an item.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -257,6 +275,7 @@ const tools: Tool[] = [
           type: "boolean",
           description: "Bypass cache and fetch fresh data (default: false)",
         },
+        group: GROUP_FILTER_PROPERTY,
       },
     },
   },
@@ -289,7 +308,7 @@ const tools: Tool[] = [
     name: "hey_list_label_emails",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "List emails with a specific label. Returns cached results unless force_refresh=true.",
+      "List emails with a specific label. Returns cached results (same shape as hey_list_emails, including sender_group) unless force_refresh=true. Pass group to keep only emails from senders delivered to those boxes.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -311,6 +330,7 @@ const tools: Tool[] = [
           type: "boolean",
           description: "Bypass cache and fetch fresh data (default: false)",
         },
+        group: GROUP_FILTER_PROPERTY,
       },
       required: ["label_id"],
     },
@@ -329,7 +349,7 @@ const tools: Tool[] = [
     name: "hey_list_collection_emails",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "List emails in a specific collection. Returns cached results unless force_refresh=true.",
+      "List emails in a specific collection. Returns cached results (same shape as hey_list_emails, including sender_group) unless force_refresh=true. Pass group to keep only emails from senders delivered to those boxes.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -351,6 +371,7 @@ const tools: Tool[] = [
           type: "boolean",
           description: "Bypass cache and fetch fresh data (default: false)",
         },
+        group: GROUP_FILTER_PROPERTY,
       },
       required: ["collection_id"],
     },
@@ -423,7 +444,7 @@ const tools: Tool[] = [
     name: "hey_read_email",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "Read an email thread's full content. Returns all messages in the thread via entries[] array (each with entryId, from, to, cc, date, body). Also returns attachments[] metadata and calendar_invites[] when present — use hey_download_attachment to save files to disk, or hey_get_calendar_invite to parse .ics details. Use format='html' (default) for rich content with thread entries, or format='text' for decoded RFC822 plain text of the first message.",
+      "Read an email thread's full content. Returns all messages in the thread via entries[] array (each with entryId, from, to, cc, date, body, sender_group). Also returns attachments[] metadata and calendar_invites[] when present — use hey_download_attachment to save files to disk, or hey_get_calendar_invite to parse .ics details. Use format='html' (default) for rich content with thread entries, or format='text' for decoded RFC822 plain text of the first message.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -504,7 +525,7 @@ const tools: Tool[] = [
     name: "hey_search",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "Search emails by query. Uses local FTS cache first, then network. Use force_refresh for real-time results.",
+      "Search emails by query. Uses local FTS cache first, then network. Each result includes sender_group (see hey_list_emails); Hey's network results show only a sender name, so it is unknown unless the address is cached. Pass group to keep only results from senders delivered to those boxes; a filtered call reads threads to find missing addresses. Use force_refresh for real-time results.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -520,6 +541,7 @@ const tools: Tool[] = [
           type: "boolean",
           description: "Bypass cache and search via network (default: false)",
         },
+        group: GROUP_FILTER_PROPERTY,
       },
       required: ["query"],
     },
@@ -1182,6 +1204,10 @@ function createServer(): Server {
     try {
       let result: unknown
 
+      // Optional sender group filter (see sender-group-filter.ts).
+      const filter = groupFilterFor(name, args, senderGroupSettings().mode)
+      if (filter.error) return errorResult(filter.error)
+
       switch (name) {
         // Reading tools
         case "hey_list_emails": {
@@ -1771,6 +1797,21 @@ function createServer(): Server {
             content: [{ type: "text", text: `Unknown tool: ${name}` }],
             isError: true,
           }
+      }
+
+      // Add each message's sender group. Never fails the tool call.
+      try {
+        result = await withSenderGroups(name, result, {
+          filtering: filter.groups !== undefined,
+        })
+      } catch (error) {
+        console.error(
+          "[mcp-hey] Could not add sender groups:",
+          sanitiseError(error),
+        )
+      }
+      if (filter.groups) {
+        result = applyGroupFilter(result, filter.groups)
       }
 
       return {

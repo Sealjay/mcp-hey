@@ -95,7 +95,7 @@ export function getDatabase(): Database {
   }
 }
 
-function initializeSchema(database: Database): void {
+export function initializeSchema(database: Database): void {
   // Check current schema version (handle case where table doesn't exist yet)
   let currentVersion = 0
   try {
