@@ -31,8 +31,14 @@ describe("htmlToText", () => {
 
 describe("stripQuotedHistory", () => {
   it.each([
-    ["Reply\n\nOn Mon, 3 Nov 2026 at 10:00, Ann <a@b.c> wrote:\n> old", "Reply"],
-    ["Antwoord\n\nOp ma 3 nov 2026 om 10:00 schreef Ann <a@b.c>:\nold", "Antwoord"],
+    [
+      "Reply\n\nOn Mon, 3 Nov 2026 at 10:00, Ann <a@b.c> wrote:\n> old",
+      "Reply",
+    ],
+    [
+      "Antwoord\n\nOp ma 3 nov 2026 om 10:00 schreef Ann <a@b.c>:\nold",
+      "Antwoord",
+    ],
     ["Reply\n\nFrom: Ann\nSent: Monday\nTo: Bob\nSubject: x\n\nold", "Reply"],
     ["Hallo\n\nVan: Ann\nVerzonden: maandag\nAan: Bob\n\noud", "Hallo"],
     ["Reply\n________________\nFrom: Ann\nDate: Monday\nold", "Reply"],
@@ -43,12 +49,16 @@ describe("stripQuotedHistory", () => {
 
   it("handles an attribution wrapped over two lines", () => {
     expect(
-      stripQuotedHistory("Reply\nOn Mon, 3 Nov 2026, Ann Long <a@b.c>\nwrote:\nold"),
+      stripQuotedHistory(
+        "Reply\nOn Mon, 3 Nov 2026, Ann Long <a@b.c>\nwrote:\nold",
+      ),
     ).toBe("Reply")
   })
 
   it("keeps inline replies around removed > lines", () => {
-    expect(stripQuotedHistory("> question\nanswer\n> more\nend")).toBe("answer\nend")
+    expect(stripQuotedHistory("> question\nanswer\n> more\nend")).toBe(
+      "answer\nend",
+    )
   })
 
   it("does not cut on an ordinary From: line", () => {
@@ -82,7 +92,10 @@ describe("capThreadEntries", () => {
   })
 
   it("spends the thread budget on the newest messages first", () => {
-    const entries: Entry[] = [{ body: "o".repeat(40) }, { body: "n".repeat(40) }]
+    const entries: Entry[] = [
+      { body: "o".repeat(40) },
+      { body: "n".repeat(40) },
+    ]
     capThreadEntries(entries, 100, 50)
     expect(entries[1].body).toHaveLength(40)
     expect(entries[0].body).toHaveLength(10)

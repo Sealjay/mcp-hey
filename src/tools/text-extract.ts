@@ -21,13 +21,14 @@ const BLOCK_TAGS = new Set(
     " ",
   ),
 )
-const QUOTE_CLASSES = /\b(gmail_quote|gmail_attr|moz-cite-prefix|yahoo_quoted)\b/
+const QUOTE_CLASSES =
+  /\b(gmail_quote|gmail_attr|moz-cite-prefix|yahoo_quoted)\b/
 const MAX_SRCDOC_DEPTH = 3
 
 function normalize(text: string): string {
   return text
     .replace(/\r\n?/g, "\n")
-    .replace(/[\u00a0\u200b\u200c\u200d\ufeff\u034f]/g, " ")
+    .replace(/\u00a0|\u200b|\u200c|\u200d|\ufeff|\u034f/g, " ")
     .split("\n")
     .map((line) => line.replace(/[ \t]+/g, " ").trim())
     .join("\n")

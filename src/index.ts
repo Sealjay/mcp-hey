@@ -1371,17 +1371,17 @@ function createServer(): Server {
             return errorResult("Error: id is required and must be valid")
           }
           const clamped = (value: unknown, low: number, high: number) =>
-          value === undefined
-            ? undefined
-            : Math.max(low, Math.min(high, Number(value)))
-        result = await readEmail(id, {
-          format,
-          forceRefresh,
-          maxEntries,
-          keepQuoted: (args?.keep_quoted as boolean) ?? false,
-          maxCharsPerEntry: clamped(args?.max_chars_per_entry, 200, 100000),
-          maxCharsTotal: clamped(args?.max_chars_total, 1000, 500000),
-        })
+            value === undefined
+              ? undefined
+              : Math.max(low, Math.min(high, Number(value)))
+          result = await readEmail(id, {
+            format,
+            forceRefresh,
+            maxEntries,
+            keepQuoted: (args?.keep_quoted as boolean) ?? false,
+            maxCharsPerEntry: clamped(args?.max_chars_per_entry, 200, 100000),
+            maxCharsTotal: clamped(args?.max_chars_total, 1000, 500000),
+          })
           break
         }
         case "hey_download_attachment": {

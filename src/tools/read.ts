@@ -539,7 +539,8 @@ function extractTextFromMimeRecursive(
   const rawContentType = headers["content-type"] || ""
   const ct = rawContentType.toLowerCase()
   const encoding = headers["content-transfer-encoding"] || "7bit"
-  const charset = rawContentType.match(/charset="?([^";\s]+)"?/i)?.[1] || "utf-8"
+  const charset =
+    rawContentType.match(/charset="?([^";\s]+)"?/i)?.[1] || "utf-8"
   const body = content.split("\n").slice(bodyStart).join("\n")
 
   if (ct.includes("image/") || ct.includes("application/octet-stream")) {
