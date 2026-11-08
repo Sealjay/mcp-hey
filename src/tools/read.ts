@@ -20,6 +20,13 @@ import {
   listAttachmentsForEmail,
   probeAttachmentsFromRaw,
 } from "./attachments"
+import {
+  capThreadEntries,
+  cleanEntryBody,
+  DEFAULT_MAX_CHARS_PER_ENTRY,
+  DEFAULT_MAX_CHARS_TOTAL,
+  htmlToText,
+} from "./text-extract"
 
 export interface Email {
   id: string // Primary ID (topic ID when available, otherwise best available)
@@ -63,6 +70,7 @@ export interface ThreadEntry {
   subject?: string
   date?: string
   body: string
+  truncated?: boolean
   attachments?: AttachmentMeta[]
   calendar_invites?: CalendarInviteMeta[]
 }
@@ -81,6 +89,7 @@ export interface EmailDetail {
   attachments?: AttachmentMeta[]
   calendar_invites?: CalendarInviteMeta[]
   muted?: boolean
+  truncated?: boolean
 }
 
 export interface ListOptions {
@@ -436,28 +445,61 @@ function extractImboxSummary(html: string, unseenCount = 0): ImboxSummary {
   }
 }
 
-function decodeQuotedPrintable(text: string): string {
-  return text
-    .replace(/=\r?\n/g, "")
-    .replace(/=([0-9A-Fa-f]{2})/g, (_, hex) =>
-      String.fromCharCode(Number.parseInt(hex, 16)),
-    )
+function decodeBytes(bytes: Uint8Array, charset: string): string {
+  try {
+    return new TextDecoder(charset as "utf-8").decode(bytes)
+  } catch {
+    return new TextDecoder("utf-8").decode(bytes)
+  }
 }
 
-function decodeBase64(text: string): string {
+function decodeQuotedPrintable(text: string, charset = "utf-8"): string {
+  const joined = text.replace(/=\r?\n/g, "")
+  const bytes: number[] = []
+  const raw = Buffer.from(joined, "utf-8")
+  for (let i = 0; i < raw.length; i++) {
+    const hex = raw.toString("latin1", i + 1, i + 3)
+    if (raw[i] === 0x3d && /^[0-9A-Fa-f]{2}$/.test(hex)) {
+      bytes.push(Number.parseInt(hex, 16))
+      i += 2
+    } else {
+      bytes.push(raw[i])
+    }
+  }
+  return decodeBytes(Uint8Array.from(bytes), charset)
+}
+
+function decodeBase64(text: string, charset = "utf-8"): string {
   const cleaned = text.replace(/\r?\n/g, "")
   try {
-    return Buffer.from(cleaned, "base64").toString("utf-8")
+    return decodeBytes(Buffer.from(cleaned, "base64"), charset)
   } catch {
     return text
   }
 }
 
-function decodeTransferEncoding(body: string, encoding: string): string {
+function decodeTransferEncoding(
+  body: string,
+  encoding: string,
+  charset = "utf-8",
+): string {
   const enc = encoding.toLowerCase().trim()
-  if (enc === "quoted-printable") return decodeQuotedPrintable(body)
-  if (enc === "base64") return decodeBase64(body)
+  if (enc === "quoted-printable") return decodeQuotedPrintable(body, charset)
+  if (enc === "base64") return decodeBase64(body, charset)
   return body
+}
+
+/** Decode RFC 2047 encoded words such as =?utf-8?Q?Caf=C3=A9?= in a header value. */
+function decodeHeaderWords(value: string): string {
+  return value
+    .replace(/\?=\s+=\?/g, "?==?")
+    .replace(
+      /=\?([^?]+)\?([bq])\?([^?]*)\?=/gi,
+      (_, charset: string, kind: string, text: string) =>
+        kind.toLowerCase() === "b"
+          ? decodeBase64(text, charset)
+          : decodeQuotedPrintable(text.replace(/_/g, " "), charset),
+    )
 }
 
 function parseMimeHeaders(block: string): {
@@ -489,33 +531,44 @@ function parseMimeHeaders(block: string): {
   return { headers, bodyStart }
 }
 
-function extractTextFromMimeRecursive(content: string): string {
+function extractTextFromMimeRecursive(
+  content: string,
+  keepQuoted = true,
+): string {
   const { headers, bodyStart } = parseMimeHeaders(content)
-  const ct = (headers["content-type"] || "").toLowerCase()
+  const rawContentType = headers["content-type"] || ""
+  const ct = rawContentType.toLowerCase()
   const encoding = headers["content-transfer-encoding"] || "7bit"
+  const charset =
+    rawContentType.match(/charset="?([^";\s]+)"?/i)?.[1] || "utf-8"
   const body = content.split("\n").slice(bodyStart).join("\n")
 
   if (ct.includes("image/") || ct.includes("application/octet-stream")) {
     return ""
   }
 
-  const boundaryMatch = ct.match(/boundary="?([^";\s]+)"?/)
+  // Boundaries are case-sensitive, so match on the original header.
+  const boundaryMatch = rawContentType.match(/boundary="?([^";\s]+)"?/i)
   if (boundaryMatch) {
     const parts = body.split(`--${boundaryMatch[1]}`)
     for (const part of parts) {
       const trimmed = part.trim()
       if (!trimmed || trimmed === "--") continue
-      const result = extractTextFromMimeRecursive(trimmed)
+      const result = extractTextFromMimeRecursive(trimmed, keepQuoted)
       if (result) return result
     }
     return ""
   }
 
   if (ct.includes("text/plain") || (!ct && !headers["content-type"])) {
-    let textBody = body.trim()
-    const bIdx = textBody.indexOf("\n--")
-    if (bIdx > 0) textBody = textBody.slice(0, bIdx).trim()
-    return decodeTransferEncoding(textBody, encoding)
+    return decodeTransferEncoding(body.trim(), encoding, charset)
+  }
+
+  if (ct.includes("text/html")) {
+    return htmlToText(
+      decodeTransferEncoding(body.trim(), encoding, charset),
+      keepQuoted,
+    )
   }
 
   return ""
@@ -525,7 +578,10 @@ function extractTextFromMimeRecursive(content: string): string {
  * Parse raw email text format (MIME) to extract body and headers.
  * Handles quoted-printable, base64, and multipart MIME messages.
  */
-function parseRawEmailText(rawText: string): {
+function parseRawEmailText(
+  rawText: string,
+  keepQuoted = true,
+): {
   from: string
   fromEmail?: string
   subject: string
@@ -538,10 +594,12 @@ function parseRawEmailText(rawText: string): {
 
   const fromHeader = headers.from || ""
   const fromMatch = fromHeader.match(/^([^<]+)?<?([^>]+@[^>]+)?>?$/)
-  const from = fromMatch?.[1]?.trim()?.replace(/^"|"$/g, "") || "Unknown"
+  const from =
+    decodeHeaderWords(fromMatch?.[1]?.trim()?.replace(/^"|"$/g, "") || "") ||
+    "Unknown"
   const fromEmail = fromMatch?.[2]
 
-  const subject = headers.subject || "(No subject)"
+  const subject = decodeHeaderWords(headers.subject || "") || "(No subject)"
   const date = headers.date
 
   const toHeader = headers.to || ""
@@ -550,7 +608,7 @@ function parseRawEmailText(rawText: string): {
     .map((t) => t.trim())
     .filter(Boolean)
 
-  const body = extractTextFromMimeRecursive(rawText)
+  const body = extractTextFromMimeRecursive(rawText, keepQuoted)
 
   return {
     from,
@@ -959,6 +1017,10 @@ export interface ReadOptions {
   format?: "html" | "text"
   forceRefresh?: boolean
   maxEntries?: number
+  /** Text format only: keep quoted earlier messages in each entry. */
+  keepQuoted?: boolean
+  maxCharsPerEntry?: number
+  maxCharsTotal?: number
 }
 
 const messageIdCache = new Map<string, string>()
@@ -984,7 +1046,14 @@ export async function readEmail(
   id: string,
   options: ReadOptions = {},
 ): Promise<CachedResult<EmailDetail>> {
-  const { format = "html", forceRefresh = false, maxEntries } = options
+  const {
+    format = "html",
+    forceRefresh = false,
+    maxEntries,
+    keepQuoted = false,
+    maxCharsPerEntry = DEFAULT_MAX_CHARS_PER_ENTRY,
+    maxCharsTotal = DEFAULT_MAX_CHARS_TOTAL,
+  } = options
 
   // Check cache first (only for HTML format)
   if (!forceRefresh && format === "html") {
@@ -1031,7 +1100,7 @@ export async function readEmail(
       entryMessageIds.map(async (eid) => {
         try {
           const raw = await heyClient.fetchHtml(`/messages/${eid}.text`)
-          const parsed = parseRawEmailText(raw)
+          const parsed = parseRawEmailText(raw, keepQuoted)
           // Probe attachments from the already-fetched raw MIME (C1)
           const probe = probeAttachmentsFromRaw(raw, eid)
           const entry: ThreadEntry = {
@@ -1041,7 +1110,7 @@ export async function readEmail(
             to: parsed.to,
             subject: parsed.subject,
             date: parsed.date,
-            body: parsed.body,
+            body: cleanEntryBody(parsed.body, keepQuoted),
             attachments: probe.attachments,
             calendar_invites: probe.calendar_invites,
           }
@@ -1059,7 +1128,11 @@ export async function readEmail(
 
     const first = parsedEntries[0]
     const subject = first?.subject || "(No subject)"
-    const combinedBody = parsedEntries.map((e) => e.body).join("\n\n---\n\n")
+    const truncated = capThreadEntries(
+      parsedEntries,
+      maxCharsPerEntry,
+      maxCharsTotal,
+    )
 
     // Aggregate attachments from all entries
     const allAttachments = parsedEntries.flatMap((e) => e.attachments ?? [])
@@ -1073,15 +1146,17 @@ export async function readEmail(
       fromEmail: first?.fromEmail,
       to: first?.to,
       subject,
-      body: combinedBody,
+      // Each message's text is in entries[]; repeating it here would double the output.
+      body: "See entries[] for the text of each message.",
       date: first?.date,
+      truncated: truncated || undefined,
       entries: parsedEntries.length > 0 ? parsedEntries : undefined,
       attachments: allAttachments.length > 0 ? allAttachments : undefined,
       calendar_invites:
         allCalendarInvites.length > 0 ? allCalendarInvites : undefined,
     }
 
-    cacheEmailDetail(email)
+    // Not cached: this shortened text must not be served to a later format="html" read.
     return { data: email, _cache: createNetworkMetadata() }
   }
 
