@@ -444,7 +444,7 @@ const tools: Tool[] = [
     name: "hey_read_email",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "Read an email thread's full content. Returns all messages in the thread via entries[] array (each with entryId, from, to, cc, date, body, sender_group). Also returns attachments[] metadata and calendar_invites[] when present — use hey_download_attachment to save files to disk, or hey_get_calendar_invite to parse .ics details. Use format='html' (default) for rich content with thread entries, or format='text' for decoded RFC822 plain text of the first message.",
+      "Read an email thread's full content. Returns all messages in the thread via entries[] array (each with entryId, from, to, cc, date, body, sender_group). Also returns attachments[] metadata and calendar_invites[] when present — use hey_download_attachment to save files to disk, or hey_get_calendar_invite to parse .ics details. format='text' (default) gives readable plain text of every message: markup and quoted history removed, and limited in size (entries[].truncated and truncated say when text was cut). format='html' gives the full original HTML, which can be very large.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -457,7 +457,22 @@ const tools: Tool[] = [
           type: "string",
           enum: ["html", "text"],
           description:
-            "html (default): rich HTML with all thread entries. text: decoded plain text of the first message only",
+            "text (default): clean plain text of all thread entries. html: full original HTML of all thread entries",
+        },
+        keep_quoted: {
+          type: "boolean",
+          description:
+            "format='text' only: keep quoted earlier messages in each entry (default: false)",
+        },
+        max_chars_per_entry: {
+          type: "number",
+          description:
+            "format='text' only: longest text per message, 200-100000 (default: 4000)",
+        },
+        max_chars_total: {
+          type: "number",
+          description:
+            "format='text' only: longest text for the thread, newest messages first, 1000-500000 (default: 24000)",
         },
         force_refresh: {
           type: "boolean",
@@ -1347,7 +1362,7 @@ function createServer(): Server {
         }
         case "hey_read_email": {
           const id = validateId(args?.id)
-          const format = (args?.format as "html" | "text") ?? "html"
+          const format = (args?.format as "html" | "text") ?? "text"
           const forceRefresh = (args?.force_refresh as boolean) ?? false
           const maxEntries = args?.max_entries
             ? Math.max(1, Math.min(100, Number(args.max_entries)))
@@ -1355,7 +1370,18 @@ function createServer(): Server {
           if (!id) {
             return errorResult("Error: id is required and must be valid")
           }
-          result = await readEmail(id, { format, forceRefresh, maxEntries })
+          const clamped = (value: unknown, low: number, high: number) =>
+          value === undefined
+            ? undefined
+            : Math.max(low, Math.min(high, Number(value)))
+        result = await readEmail(id, {
+          format,
+          forceRefresh,
+          maxEntries,
+          keepQuoted: (args?.keep_quoted as boolean) ?? false,
+          maxCharsPerEntry: clamped(args?.max_chars_per_entry, 200, 100000),
+          maxCharsTotal: clamped(args?.max_chars_total, 1000, 500000),
+        })
           break
         }
         case "hey_download_attachment": {
