@@ -20,6 +20,13 @@ import {
   listAttachmentsForEmail,
   probeAttachmentsFromRaw,
 } from "./attachments"
+import {
+  capThreadEntries,
+  cleanEntryBody,
+  DEFAULT_MAX_CHARS_PER_ENTRY,
+  DEFAULT_MAX_CHARS_TOTAL,
+  MAX_TEXT_SOURCE_CHARS,
+} from "./text-extract"
 
 export interface Email {
   id: string // Primary ID (topic ID when available, otherwise best available)
@@ -81,6 +88,7 @@ export interface EmailDetail {
   attachments?: AttachmentMeta[]
   calendar_invites?: CalendarInviteMeta[]
   muted?: boolean
+  truncated?: boolean
 }
 
 export interface ListOptions {
@@ -436,28 +444,45 @@ function extractImboxSummary(html: string, unseenCount = 0): ImboxSummary {
   }
 }
 
-function decodeQuotedPrintable(text: string): string {
-  return text
-    .replace(/=\r?\n/g, "")
-    .replace(/=([0-9A-Fa-f]{2})/g, (_, hex) =>
-      String.fromCharCode(Number.parseInt(hex, 16)),
-    )
-}
+const MAX_MIME_DEPTH = 10
+const MAX_MIME_PARTS = 200
 
-function decodeBase64(text: string): string {
-  const cleaned = text.replace(/\r?\n/g, "")
-  try {
-    return Buffer.from(cleaned, "base64").toString("utf-8")
-  } catch {
-    return text
-  }
-}
-
-function decodeTransferEncoding(body: string, encoding: string): string {
+function decodeMimeBytes(body: string, encoding: string): Uint8Array {
   const enc = encoding.toLowerCase().trim()
-  if (enc === "quoted-printable") return decodeQuotedPrintable(body)
-  if (enc === "base64") return decodeBase64(body)
-  return body
+  if (enc === "base64") {
+    return new Uint8Array(Buffer.from(body.replace(/\s/g, ""), "base64"))
+  }
+  if (enc === "quoted-printable") {
+    const folded = body.replace(/=\r?\n/g, "")
+    const bytes: number[] = []
+    const raw = Buffer.from(folded, "latin1")
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i] === 0x3d) {
+        const hex = raw.toString("latin1", i + 1, i + 3)
+        if (/^[0-9a-f]{2}$/i.test(hex)) {
+          bytes.push(Number.parseInt(hex, 16))
+          i += 2
+          continue
+        }
+      }
+      bytes.push(raw[i])
+    }
+    return Uint8Array.from(bytes)
+  }
+  return Uint8Array.from(Buffer.from(body, "utf8"))
+}
+
+function decodeMimeText(
+  body: string,
+  encoding: string,
+  charset: string,
+): string {
+  const bytes = decodeMimeBytes(body, encoding)
+  try {
+    return new TextDecoder(charset as "utf-8").decode(bytes)
+  } catch {
+    return new TextDecoder("utf-8").decode(bytes)
+  }
 }
 
 function parseMimeHeaders(block: string): {
@@ -489,43 +514,95 @@ function parseMimeHeaders(block: string): {
   return { headers, bodyStart }
 }
 
-function extractTextFromMimeRecursive(content: string): string {
+function splitMultipartBody(body: string, boundary: string): string[] {
+  const boundaryLine = new RegExp(
+    `^--${boundary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(--)?[\\t ]*$`,
+  )
+  const parts: string[] = []
+  let current: string[] | null = null
+  for (const line of body.split(/\r?\n/)) {
+    const match = line.match(boundaryLine)
+    if (match) {
+      if (current) parts.push(current.join("\n"))
+      if (parts.length >= MAX_MIME_PARTS) break
+      if (match[1]) break
+      current = []
+    } else if (current) {
+      current.push(line)
+    }
+  }
+  return parts
+}
+
+function extractTextFromMimeRecursive(
+  content: string,
+  depth = 0,
+  partCount = { value: 0 },
+): { text: string; kind: "plain" | "html" } | undefined {
+  if (
+    depth > MAX_MIME_DEPTH ||
+    partCount.value >= MAX_MIME_PARTS ||
+    !/\r?\n\r?\n/.test(content)
+  ) {
+    return undefined
+  }
   const { headers, bodyStart } = parseMimeHeaders(content)
-  const ct = (headers["content-type"] || "").toLowerCase()
+  const rawContentType = headers["content-type"] || "text/plain"
+  const ct = rawContentType.toLowerCase()
   const encoding = headers["content-transfer-encoding"] || "7bit"
   const body = content.split("\n").slice(bodyStart).join("\n")
-
-  if (ct.includes("image/") || ct.includes("application/octet-stream")) {
-    return ""
-  }
-
-  const boundaryMatch = ct.match(/boundary="?([^";\s]+)"?/)
-  if (boundaryMatch) {
-    const parts = body.split(`--${boundaryMatch[1]}`)
-    for (const part of parts) {
-      const trimmed = part.trim()
-      if (!trimmed || trimmed === "--") continue
-      const result = extractTextFromMimeRecursive(trimmed)
-      if (result) return result
+  if (/^multipart\//i.test(ct)) {
+    const boundary = rawContentType.match(/boundary="?([^";\s]+)"?/i)?.[1]
+    if (!boundary) return undefined
+    const results: { text: string; kind: "plain" | "html" }[] = []
+    for (const part of splitMultipartBody(body, boundary)) {
+      partCount.value += 1
+      if (partCount.value > MAX_MIME_PARTS) break
+      const result = extractTextFromMimeRecursive(part, depth + 1, partCount)
+      if (result?.text) results.push(result)
     }
-    return ""
+    return results.find((result) => result.kind === "plain") ?? results[0]
   }
 
-  if (ct.includes("text/plain") || (!ct && !headers["content-type"])) {
-    let textBody = body.trim()
-    const bIdx = textBody.indexOf("\n--")
-    if (bIdx > 0) textBody = textBody.slice(0, bIdx).trim()
-    return decodeTransferEncoding(textBody, encoding)
+  if (/^attachment\b/i.test(headers["content-disposition"] || "")) {
+    return undefined
   }
+  const charset =
+    rawContentType.match(/charset="?([^";\s]+)"?/i)?.[1] || "utf-8"
+  const decoded = decodeMimeText(body, encoding, charset).trim()
+  if (!decoded) return undefined
+  if (/^text\/plain\b/i.test(ct)) return { text: decoded, kind: "plain" }
+  if (/^text\/html\b/i.test(ct)) return { text: decoded, kind: "html" }
+  return undefined
+}
 
-  return ""
+function decodeHeaderWords(value: string): string {
+  return value
+    .replace(/\?=\s+=\?/g, "?==?")
+    .replace(
+      /=\?([^?]+)\?([bq])\?([^?]*)\?=/gi,
+      (_match, charset: string, encoding: string, payload: string) => {
+        const bytes =
+          encoding.toLowerCase() === "b"
+            ? new Uint8Array(Buffer.from(payload, "base64"))
+            : decodeMimeBytes(payload.replace(/_/g, " "), "quoted-printable")
+        try {
+          return new TextDecoder(charset as "utf-8").decode(bytes)
+        } catch {
+          return new TextDecoder("utf-8").decode(bytes)
+        }
+      },
+    )
 }
 
 /**
  * Parse raw email text format (MIME) to extract body and headers.
  * Handles quoted-printable, base64, and multipart MIME messages.
  */
-function parseRawEmailText(rawText: string): {
+function parseRawEmailText(
+  rawText: string,
+  keepQuoted = false,
+): {
   from: string
   fromEmail?: string
   subject: string
@@ -533,15 +610,22 @@ function parseRawEmailText(rawText: string): {
   date?: string
   to?: string[]
 } {
-  const { headers, bodyStart } = parseMimeHeaders(rawText)
-  const lines = rawText.split("\n")
+  if (rawText.length > MAX_TEXT_SOURCE_CHARS) {
+    throw new Error("Email MIME content exceeds the maximum parsing size")
+  }
+  if (!/\r?\n\r?\n/.test(rawText)) {
+    throw new Error("Malformed MIME message: missing header/body separator")
+  }
+  const { headers } = parseMimeHeaders(rawText)
 
   const fromHeader = headers.from || ""
   const fromMatch = fromHeader.match(/^([^<]+)?<?([^>]+@[^>]+)?>?$/)
-  const from = fromMatch?.[1]?.trim()?.replace(/^"|"$/g, "") || "Unknown"
+  const from =
+    decodeHeaderWords(fromMatch?.[1]?.trim()?.replace(/^"|"$/g, "") || "") ||
+    "Unknown"
   const fromEmail = fromMatch?.[2]
 
-  const subject = headers.subject || "(No subject)"
+  const subject = decodeHeaderWords(headers.subject || "") || "(No subject)"
   const date = headers.date
 
   const toHeader = headers.to || ""
@@ -550,13 +634,13 @@ function parseRawEmailText(rawText: string): {
     .map((t) => t.trim())
     .filter(Boolean)
 
-  const body = extractTextFromMimeRecursive(rawText)
+  const body = extractTextFromMimeRecursive(rawText)?.text || ""
 
   return {
     from,
     fromEmail,
     subject,
-    body,
+    body: cleanEntryBody(body, keepQuoted),
     date,
     to: to.length > 0 ? to : undefined,
   }
@@ -959,20 +1043,157 @@ export interface ReadOptions {
   format?: "html" | "text"
   forceRefresh?: boolean
   maxEntries?: number
+  keepQuoted?: boolean
+  maxCharsPerEntry?: number
+  maxCharsTotal?: number
 }
 
+export const MAX_THREAD_ENTRIES = 50
+export const MAX_CHARS_PER_ENTRY = 10_000
+export const MAX_CHARS_TOTAL = 50_000
+const DEFAULT_MAX_ENTRIES = 20
+const MAX_THREAD_HTML_CHARS = 2_000_000
+const THREAD_FETCH_CONCURRENCY = 4
+
 const messageIdCache = new Map<string, string>()
+
+interface ThreadMessageId {
+  entryId: string
+  messageId: string
+}
+
+function isEntryBodyNode(node: HTMLElement): boolean {
+  const classes = node.getAttribute("class") || ""
+  return (
+    node.rawTagName?.toLowerCase() === "message-content" ||
+    /(?:^|\s)(?:entry__content|trix-content)(?:$|\s)/.test(classes)
+  )
+}
+
+function isInsideEntryBody(node: HTMLElement): boolean {
+  let parent = node.parentNode as HTMLElement | null
+  while (parent) {
+    if (isEntryBodyNode(parent)) return true
+    parent = parent.parentNode as HTMLElement | null
+  }
+  return false
+}
+
+/**
+ * Read message IDs only from actual entry records on the requested topic page.
+ * User-authored links in the page body and unrelated navigation are not IDs.
+ */
+function extractThreadMessageIds(
+  html: string,
+  requestedTopicId: string,
+  allowRelatedTopic = false,
+): ThreadMessageId[] {
+  if (html.length > MAX_THREAD_HTML_CHARS) {
+    throw new Error("Email thread page exceeds the maximum parsing size")
+  }
+  const root = parseHtml(html)
+  const pageTopicId = root
+    .querySelectorAll("[data-topic-id]")
+    .find((element) => !isInsideEntryBody(element))
+    ?.getAttribute("data-topic-id")
+    ?.replace(/^topic_/, "")
+  if (pageTopicId && pageTopicId !== requestedTopicId && !allowRelatedTopic) {
+    return []
+  }
+
+  const entries = root.querySelectorAll(
+    ".entry.entry--sheet, article.entry[data-entry-id]",
+  )
+  const found: ThreadMessageId[] = []
+  const seen = new Set<string>()
+  for (const entry of entries.slice(0, MAX_THREAD_ENTRIES)) {
+    if (isInsideEntryBody(entry)) continue
+    const rawEntryId =
+      entry.getAttribute("data-entry-id") ||
+      entry.getAttribute("id")?.match(/^entry_(.+)$/)?.[1]
+    const entryId = rawEntryId?.replace(/^entry_/, "")
+    if (!entryId || !/^[A-Za-z0-9_-]+$/.test(entryId)) continue
+    if (seen.has(entryId)) continue
+    seen.add(entryId)
+
+    let messageId =
+      entry.getAttribute("data-message-id")?.match(/^[A-Za-z0-9_-]+$/)?.[0] ||
+      ""
+    for (const link of entry.querySelectorAll("a[href]")) {
+      if (isInsideEntryBody(link)) continue
+      const href = link.getAttribute("href") || ""
+      const match = href.match(/^\/messages\/([A-Za-z0-9_-]+)(?:\/|$)/)
+      if (match) {
+        messageId ||= match[1]
+        break
+      }
+    }
+
+    if (allowRelatedTopic && entryId !== requestedTopicId) continue
+    found.push({ entryId, messageId: messageId || entryId })
+  }
+  return found
+}
+
+function extractOwnedPageTopicId(html: string): string | undefined {
+  if (html.length > MAX_THREAD_HTML_CHARS) {
+    throw new Error("Email thread page exceeds the maximum parsing size")
+  }
+  const root = parseHtml(html)
+  const topic = root
+    .querySelectorAll("[data-topic-id]")
+    .find((element) => !isInsideEntryBody(element))
+    ?.getAttribute("data-topic-id")
+    ?.replace(/^topic_/, "")
+  return topic && /^[A-Za-z0-9_-]+$/.test(topic) ? topic : undefined
+}
+
+async function resolveThreadMessageIds(id: string): Promise<ThreadMessageId[]> {
+  let topicPageFetched = false
+  try {
+    const topicHtml = await heyClient.fetchHtml(`/topics/${id}`)
+    topicPageFetched = true
+    const messages = extractThreadMessageIds(topicHtml, id)
+    if (messages.length > 0) return messages
+  } catch (err) {
+    if (err instanceof Error && /maximum parsing size/.test(err.message)) {
+      throw err
+    }
+    console.error("[mcp-hey] Topic page fetch failed for", id, err)
+  }
+  if (topicPageFetched) return []
+
+  for (const endpoint of [`/entries/${id}`, `/postings/${id}`]) {
+    try {
+      const html = await heyClient.fetchHtml(endpoint)
+      const relatedTopicId = extractOwnedPageTopicId(html)
+      if (relatedTopicId && relatedTopicId !== id) {
+        const topicHtml = await heyClient.fetchHtml(`/topics/${relatedTopicId}`)
+        const messages = extractThreadMessageIds(topicHtml, relatedTopicId)
+        if (messages.length > 0) return messages
+      }
+
+      const entryMessages = extractThreadMessageIds(html, id, true)
+      if (entryMessages.length > 0) return entryMessages
+    } catch (err) {
+      if (err instanceof Error && /maximum parsing size/.test(err.message)) {
+        throw err
+      }
+      console.error(`[mcp-hey] ${endpoint} fetch failed for ${id}:`, err)
+    }
+  }
+  return []
+}
 
 export async function resolveMessageId(id: string): Promise<string> {
   const cached = messageIdCache.get(id)
   if (cached) return cached
 
   try {
-    const html = await heyClient.fetchHtml(`/topics/${id}`)
-    const match = html.match(/\/messages\/(\d+)/)
-    if (match) {
-      messageIdCache.set(id, match[1])
-      return match[1]
+    const message = (await resolveThreadMessageIds(id))[0]?.messageId
+    if (message) {
+      messageIdCache.set(id, message)
+      return message
     }
   } catch (err) {
     console.error("[mcp-hey] resolveMessageId failed:", err)
@@ -984,7 +1205,26 @@ export async function readEmail(
   id: string,
   options: ReadOptions = {},
 ): Promise<CachedResult<EmailDetail>> {
-  const { format = "html", forceRefresh = false, maxEntries } = options
+  const {
+    format = "html",
+    forceRefresh = false,
+    maxEntries,
+    keepQuoted = false,
+    maxCharsPerEntry = DEFAULT_MAX_CHARS_PER_ENTRY,
+    maxCharsTotal = DEFAULT_MAX_CHARS_TOTAL,
+  } = options
+  const entryLimit = Math.max(
+    1,
+    Math.min(Math.floor(maxEntries ?? DEFAULT_MAX_ENTRIES), MAX_THREAD_ENTRIES),
+  )
+  const perEntryLimit = Math.max(
+    1,
+    Math.min(Math.floor(maxCharsPerEntry), MAX_CHARS_PER_ENTRY),
+  )
+  const totalLimit = Math.max(
+    1,
+    Math.min(Math.floor(maxCharsTotal), MAX_CHARS_TOTAL),
+  )
 
   // Check cache first (only for HTML format)
   if (!forceRefresh && format === "html") {
@@ -1003,63 +1243,75 @@ export async function readEmail(
   let messageId = id
 
   if (format === "text") {
-    let entryMessageIds: string[] = []
-    try {
-      const topicHtml = await heyClient.fetchHtml(`/topics/${id}`)
-      const seen = new Set<string>()
-      for (const m of topicHtml.matchAll(/\/messages\/(\d+)/g)) {
-        if (!seen.has(m[1])) {
-          seen.add(m[1])
-          entryMessageIds.push(m[1])
-        }
-      }
-    } catch (err) {
-      console.error("[mcp-hey] Topic page fetch failed for", id, err)
+    let threadMessages = await resolveThreadMessageIds(id)
+
+    // Non-topic IDs (entry, posting, or message IDs) may identify one message
+    // directly. The endpoint remains scoped to that ID rather than page links.
+    if (threadMessages.length === 0) {
+      threadMessages = [{ entryId: id, messageId: id }]
+    }
+    threadMessages = threadMessages.slice(0, entryLimit)
+    messageId = threadMessages[0].messageId
+
+    if (threadMessages[0].messageId !== id) {
+      messageIdCache.set(id, threadMessages[0].messageId)
     }
 
-    if (entryMessageIds.length === 0) entryMessageIds = [id]
-    if (maxEntries) entryMessageIds = entryMessageIds.slice(0, maxEntries)
-    messageId = entryMessageIds[0]
-
-    // Cache the resolved message IDs so resolveMessageId can skip the fetch
-    if (entryMessageIds[0] !== id) {
-      messageIdCache.set(id, entryMessageIds[0])
-    }
-
-    // Fetch all entries in parallel (H4)
-    const entryResults = await Promise.all(
-      entryMessageIds.map(async (eid) => {
-        try {
-          const raw = await heyClient.fetchHtml(`/messages/${eid}.text`)
-          const parsed = parseRawEmailText(raw)
-          // Probe attachments from the already-fetched raw MIME (C1)
-          const probe = probeAttachmentsFromRaw(raw, eid)
-          const entry: ThreadEntry = {
-            entryId: eid,
-            from: parsed.from,
-            fromEmail: parsed.fromEmail,
-            to: parsed.to,
-            subject: parsed.subject,
-            date: parsed.date,
-            body: parsed.body,
-            attachments: probe.attachments,
-            calendar_invites: probe.calendar_invites,
+    const entryResults: (ThreadEntry | null)[] = new Array(
+      threadMessages.length,
+    ).fill(null)
+    let nextEntry = 0
+    const workers = Array.from(
+      { length: Math.min(THREAD_FETCH_CONCURRENCY, threadMessages.length) },
+      async () => {
+        while (nextEntry < threadMessages.length) {
+          const index = nextEntry++
+          const { entryId, messageId: entryMessageId } = threadMessages[index]
+          try {
+            const raw = await heyClient.fetchHtml(
+              `/messages/${entryMessageId}.text`,
+            )
+            if (raw.length > MAX_TEXT_SOURCE_CHARS) {
+              throw new Error(
+                "Email MIME content exceeds the maximum parsing size",
+              )
+            }
+            const parsed = parseRawEmailText(raw, keepQuoted)
+            if (!parsed.body)
+              throw new Error("Message has no readable text body")
+            const probe = probeAttachmentsFromRaw(raw, entryMessageId)
+            entryResults[index] = {
+              entryId,
+              from: parsed.from,
+              fromEmail: parsed.fromEmail,
+              to: parsed.to,
+              subject: parsed.subject,
+              date: parsed.date,
+              body: parsed.body,
+              attachments: probe.attachments,
+              calendar_invites: probe.calendar_invites,
+            }
+          } catch (err) {
+            console.error(
+              "[mcp-hey] Entry fetch failed for",
+              entryMessageId,
+              err,
+            )
           }
-          return entry
-        } catch (err) {
-          console.error("[mcp-hey] Entry fetch failed for", eid, err)
-          return null
         }
-      }),
+      },
     )
+    await Promise.all(workers)
 
     const parsedEntries = entryResults.filter(
       (e): e is ThreadEntry => e !== null,
     )
+    if (parsedEntries.length === 0) {
+      throw new Error(`No readable entries found for email ${id}`)
+    }
 
     const first = parsedEntries[0]
-    const subject = first?.subject || "(No subject)"
-    const combinedBody = parsedEntries.map((e) => e.body).join("\n\n---\n\n")
+    const truncated = capThreadEntries(parsedEntries, perEntryLimit, totalLimit)
 
     // Aggregate attachments from all entries
     const allAttachments = parsedEntries.flatMap((e) => e.attachments ?? [])
@@ -1072,16 +1324,16 @@ export async function readEmail(
       from: first?.from || "Unknown",
       fromEmail: first?.fromEmail,
       to: first?.to,
-      subject,
-      body: combinedBody,
+      subject: first.subject || "(No subject)",
+      body: "",
       date: first?.date,
-      entries: parsedEntries.length > 0 ? parsedEntries : undefined,
+      entries: parsedEntries,
       attachments: allAttachments.length > 0 ? allAttachments : undefined,
       calendar_invites:
         allCalendarInvites.length > 0 ? allCalendarInvites : undefined,
+      truncated: truncated || undefined,
     }
 
-    cacheEmailDetail(email)
     return { data: email, _cache: createNetworkMetadata() }
   }
 
@@ -1121,6 +1373,9 @@ export async function readEmail(
     }
   }
 
+  if (content.length > MAX_THREAD_HTML_CHARS) {
+    throw new Error("Email content exceeds the maximum parsing size")
+  }
   const email = extractEmailDetail(content, id, isRawText)
 
   // Probe for attachments via the raw .text endpoint. Failures (e.g. the
@@ -1131,9 +1386,9 @@ export async function readEmail(
     // H5: Extract message ID from the already-fetched HTML content to avoid
     // a redundant resolveMessageId call that re-fetches the topic page.
     if (messageId === id) {
-      const contentMatch = content.match(/\/messages\/(\d+)/)
-      if (contentMatch) {
-        messageId = contentMatch[1]
+      const threadMessage = extractThreadMessageIds(content, id)[0]?.messageId
+      if (threadMessage) {
+        messageId = threadMessage
         messageIdCache.set(id, messageId)
       } else {
         messageId = await resolveMessageId(id)

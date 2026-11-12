@@ -242,15 +242,23 @@ List emails in a specific collection.
 
 ### hey_read_email
 
-Read the full content of an email by ID. Surface attachment metadata and
-parsed calendar invites alongside the body.
+Read the full content of an email by ID. HTML is the default format; pass
+`format: "text"` for readable text across the whole thread. Text is extracted
+from MIME plain-text parts when available, falls back to HTML (including
+`iframe srcdoc`), and removes quoted history unless `keep_quoted` is true.
+Readable text extraction carries forward [@michalhron’s contribution in
+#22](https://github.com/Sealjay/mcp-hey/pull/22).
 
 **Parameters:**
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| id | string | **Yes** | - | The email ID to read (usually `postingId` or `topicId`) |
+| id | string | **Yes** | - | Topic/thread, posting, entry, or message ID |
 | format | string | No | "html" | Format: "html" or "text" |
 | force_refresh | boolean | No | false | Bypass cache and fetch fresh data |
+| max_entries | number | No | 20 | `format: "text"` only: maximum entries to fetch (integer, 1-50) |
+| max_chars_per_entry | number | No | 4,000 | `format: "text"` only: maximum characters per entry (integer, 1-10,000) |
+| max_chars_total | number | No | 24,000 | `format: "text"` only: maximum characters across entries (integer, 1-50,000) |
+| keep_quoted | boolean | No | false | `format: "text"` only: retain quoted earlier messages |
 
 **Returns:**
 ```json
@@ -285,6 +293,14 @@ parsed calendar invites alongside the body.
 > the bytes to disk or `hey_get_calendar_invite` to fetch the parsed invite.
 > When the response is served from cache, `attachments` and
 > `calendar_invites` may be omitted; pass `force_refresh: true` to populate.
+
+> **Text format**: Each entry's `body` contains readable text and
+> `truncated: true` marks an entry shortened by either character limit. The
+> top-level `truncated` flag is true if any entry was shortened. The top-level
+> `body` is empty in text format to avoid duplicating the full thread.
+> `max_entries`, `max_chars_per_entry`, and `max_chars_total` must be integers
+> in their documented ranges. Thread entry IDs are read only from entry
+> metadata on the requested topic page; unscoped links are ignored.
 
 > **Paper Trail Bundles**: Some Paper Trail emails (transactional emails from high-volume senders like banks, Wise, Amazon) are grouped into "bundles". These have only a `postingId` (no `topicId`). The tool automatically tries the bundle endpoint when needed.
 
