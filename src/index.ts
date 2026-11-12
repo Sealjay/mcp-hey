@@ -66,6 +66,9 @@ import {
   listSetAside,
   listSpam,
   listTrash,
+  MAX_CHARS_PER_ENTRY,
+  MAX_CHARS_TOTAL,
+  MAX_THREAD_ENTRIES,
   readEmail,
   searchEmails,
 } from "./tools/read"
@@ -78,6 +81,10 @@ import {
   saveDraft,
   sendEmail,
 } from "./tools/send"
+import {
+  DEFAULT_MAX_CHARS_PER_ENTRY,
+  DEFAULT_MAX_CHARS_TOTAL,
+} from "./tools/text-extract"
 
 /**
  * Validate and clamp a numeric parameter within bounds.
@@ -92,6 +99,16 @@ function clampNumber(
     return defaultVal
   }
   return Math.max(min, Math.min(Math.floor(value), max))
+}
+
+function validateReadLimit(
+  value: unknown,
+  min: number,
+  max: number,
+): number | undefined | null {
+  if (value === undefined) return undefined
+  if (typeof value !== "number" || !Number.isInteger(value)) return null
+  return value >= min && value <= max ? value : null
 }
 
 /**
@@ -444,20 +461,45 @@ const tools: Tool[] = [
     name: "hey_read_email",
     annotations: { readOnlyHint: true, openWorldHint: true },
     description:
-      "Read an email thread's full content. Returns all messages in the thread via entries[] array (each with entryId, from, to, cc, date, body, sender_group). Also returns attachments[] metadata and calendar_invites[] when present — use hey_download_attachment to save files to disk, or hey_get_calendar_invite to parse .ics details. Use format='html' (default) for rich content with thread entries, or format='text' for decoded RFC822 plain text of the first message.",
+      "Read an email thread's full content. Returns messages in entries[] (entryId, from, to, cc, date, body) and attachment/calendar metadata. HTML is the default; set format='text' for readable text across the thread. Text is size-limited; truncated flags identify shortened entries. Use hey_download_attachment or hey_get_calendar_invite for attachment details.",
     inputSchema: {
       type: "object" as const,
       properties: {
         id: {
           type: "string",
           description:
-            "The topic/thread ID or entry ID to read (use topicId from list operations for full threads)",
+            "The topic/thread, posting, entry, or message ID to read (use topicId from list operations for full threads)",
         },
         format: {
           type: "string",
           enum: ["html", "text"],
           description:
-            "html (default): rich HTML with all thread entries. text: decoded plain text of the first message only",
+            "html (default): full rich content. text: readable plain text for all entries",
+        },
+        max_entries: {
+          type: "number",
+          minimum: 1,
+          maximum: MAX_THREAD_ENTRIES,
+          multipleOf: 1,
+          description: "Maximum thread entries to read, 1-50 (default: 20)",
+        },
+        max_chars_per_entry: {
+          type: "number",
+          minimum: 1,
+          maximum: MAX_CHARS_PER_ENTRY,
+          multipleOf: 1,
+          description: `Maximum text characters per entry, 1-${MAX_CHARS_PER_ENTRY} (default: ${DEFAULT_MAX_CHARS_PER_ENTRY})`,
+        },
+        max_chars_total: {
+          type: "number",
+          minimum: 1,
+          maximum: MAX_CHARS_TOTAL,
+          multipleOf: 1,
+          description: `Maximum text characters across the thread, 1-${MAX_CHARS_TOTAL} (default: ${DEFAULT_MAX_CHARS_TOTAL})`,
+        },
+        keep_quoted: {
+          type: "boolean",
+          description: "For format='text', keep quoted earlier messages",
         },
         force_refresh: {
           type: "boolean",
@@ -1347,15 +1389,77 @@ function createServer(): Server {
         }
         case "hey_read_email": {
           const id = validateId(args?.id)
-          const format = (args?.format as "html" | "text") ?? "html"
-          const forceRefresh = (args?.force_refresh as boolean) ?? false
-          const maxEntries = args?.max_entries
-            ? Math.max(1, Math.min(100, Number(args.max_entries)))
-            : undefined
+          const formatValue = args?.format
+          const format =
+            formatValue === undefined
+              ? "html"
+              : formatValue === "html" || formatValue === "text"
+                ? formatValue
+                : null
+          const forceRefreshValue = args?.force_refresh
+          const forceRefresh =
+            forceRefreshValue === undefined
+              ? false
+              : typeof forceRefreshValue === "boolean"
+                ? forceRefreshValue
+                : null
+          const maxEntries = validateReadLimit(
+            args?.max_entries,
+            1,
+            MAX_THREAD_ENTRIES,
+          )
+          const maxCharsPerEntry = validateReadLimit(
+            args?.max_chars_per_entry,
+            1,
+            MAX_CHARS_PER_ENTRY,
+          )
+          const maxCharsTotal = validateReadLimit(
+            args?.max_chars_total,
+            1,
+            MAX_CHARS_TOTAL,
+          )
+          const keepQuotedValue = args?.keep_quoted
+          const keepQuoted =
+            keepQuotedValue === undefined
+              ? false
+              : typeof keepQuotedValue === "boolean"
+                ? keepQuotedValue
+                : null
           if (!id) {
             return errorResult("Error: id is required and must be valid")
           }
-          result = await readEmail(id, { format, forceRefresh, maxEntries })
+          if (!format) {
+            return errorResult("Error: format must be html or text")
+          }
+          if (forceRefresh === null) {
+            return errorResult("Error: force_refresh must be a boolean")
+          }
+          if (maxEntries === null) {
+            return errorResult(
+              `Error: max_entries must be an integer from 1 to ${MAX_THREAD_ENTRIES}`,
+            )
+          }
+          if (maxCharsPerEntry === null) {
+            return errorResult(
+              `Error: max_chars_per_entry must be an integer from 1 to ${MAX_CHARS_PER_ENTRY}`,
+            )
+          }
+          if (maxCharsTotal === null) {
+            return errorResult(
+              `Error: max_chars_total must be an integer from 1 to ${MAX_CHARS_TOTAL}`,
+            )
+          }
+          if (keepQuoted === null) {
+            return errorResult("Error: keep_quoted must be a boolean")
+          }
+          result = await readEmail(id, {
+            format,
+            forceRefresh,
+            maxEntries,
+            maxCharsPerEntry,
+            maxCharsTotal,
+            keepQuoted,
+          })
           break
         }
         case "hey_download_attachment": {

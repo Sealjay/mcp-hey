@@ -17,6 +17,10 @@ import { dirname, isAbsolute, join, resolve } from "node:path"
 import { heyClient } from "../hey-client"
 import { resolveMessageId } from "./read"
 
+const MAX_RAW_MIME_CHARS = 2_000_000
+const MAX_MIME_PARTS = 200
+const MAX_MIME_DEPTH = 10
+
 export interface AttachmentMeta {
   /** Stable per-message identifier ("part-{n}" indexed from the multipart walk). */
   id: string
@@ -179,9 +183,15 @@ function decodePartBody(
  * multipart/* (alternative, related, mixed, signed) is descended into.
  */
 function walkMultipart(rawMessage: string): MimePart[] {
+  if (rawMessage.length > MAX_RAW_MIME_CHARS) {
+    throw new Error("Email MIME content exceeds the maximum parsing size")
+  }
   const parts: MimePart[] = []
 
-  const walk = (block: string): void => {
+  const walk = (block: string, depth = 0): void => {
+    if (depth > MAX_MIME_DEPTH) {
+      throw new Error("Email MIME content exceeds the maximum nesting depth")
+    }
     const split = splitHeaderBody(block)
     if (!split) return
     const { headers, body } = split
@@ -190,22 +200,37 @@ function walkMultipart(rawMessage: string): MimePart[] {
     const boundary = getHeaderParam(contentType, "boundary")
 
     if (boundary && /^multipart\//i.test(contentType)) {
-      // Split body on --boundary lines. Discard the preamble before the
-      // first boundary and the epilogue after the closing boundary.
-      const delim = `--${boundary}`
-      const segments = body.split(delim)
-      // segments[0] is preamble, last segment may be "--\r\n..." (closing).
-      for (let i = 1; i < segments.length; i++) {
-        const segment = segments[i]
-        // Closing boundary marker
-        if (segment.startsWith("--")) break
-        // Strip leading CRLF that follows the boundary marker.
-        const cleaned = segment.replace(/^\r?\n/, "").replace(/\r?\n$/, "")
-        walk(cleaned)
+      // Only boundary lines delimit MIME parts; boundary-like body text does not.
+      const boundaryLine = new RegExp(
+        `^--${boundary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(--)?[\\t ]*$`,
+      )
+      const lines = body.split(/\r?\n/)
+      let segment: string[] | null = null
+      let segmentCount = 0
+      for (const line of lines) {
+        const match = line.match(boundaryLine)
+        if (match) {
+          if (segment) {
+            segmentCount++
+            if (segmentCount > MAX_MIME_PARTS) {
+              throw new Error(
+                "Email MIME content exceeds the maximum part count",
+              )
+            }
+            walk(segment.join("\r\n"), depth + 1)
+          }
+          if (match[1]) break
+          segment = []
+        } else if (segment) {
+          segment.push(line)
+        }
       }
       return
     }
 
+    if (parts.length >= MAX_MIME_PARTS) {
+      throw new Error("Email MIME content exceeds the maximum part count")
+    }
     const decoded = decodePartBody(body, headers["content-transfer-encoding"])
     const text = bytesToUtf8(decoded)
     parts.push({ headers, rawBody: body, decoded, text })
